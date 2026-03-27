@@ -200,8 +200,28 @@ export class ChatView extends ItemView {
     wrapper.toggleClass("oa-chat-assistant", message.role === ChatRole.Assistant);
     wrapper.toggleClass("oa-chat-system", message.role === ChatRole.System);
 
-    const content = wrapper.createDiv({ cls: "oa-chat-message-content" });
+    const content = wrapper.createDiv({
+      cls: "oa-chat-message-content",
+    });
     content.setText(message.content);
+
+    if (message.role !== ChatRole.System) {
+      const copyBtn = wrapper.createEl("button", {
+        cls: "oa-chat-copy-btn",
+        attr: {
+          title: "Copy message",
+        },
+      });
+      copyBtn.innerHTML = "📋";
+      copyBtn.addEventListener("click", () => {
+        navigator.clipboard.writeText(message.content).then(() => {
+          copyBtn.innerHTML = "✅";
+          setTimeout(() => {
+            copyBtn.innerHTML = "📋";
+          }, 2000);
+        });
+      });
+    }
 
     this.messagesEl.scrollTo({ top: this.messagesEl.scrollHeight });
     return content;
