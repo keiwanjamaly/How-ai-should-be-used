@@ -11,16 +11,24 @@ npm run build
 
 ## Installation
 
-1. Copy this folder to your vault's `.obsidian/plugins/` directory
-2. Or use the symlink approach (see below)
-
-## Symlink Setup (for development)
+Copy this folder to your vault's `.obsidian/plugins/` directory:
 
 ```bash
-# Create symlink from your vault's plugin folder
-ln -s /path/to/this/folder ~/.obsidian/plugins/hello-world-panel
+# From your vault's plugin folder
+cp -r /path/to/this/folder .obsidian/plugins/hello-world-panel
 ```
 
+## Development
+
+After editing:
+```bash
+npm run build
+```
+
+Then copy to vault:
+```bash
+rm -rf .obsidian/plugins/hello-world-panel && cp -r /path/to/this/folder .obsidian/plugins/hello-world-panel
+```
 
 ## Hot Reload
 

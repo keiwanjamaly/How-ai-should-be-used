@@ -7,5 +7,5 @@
 	"author": "Your Name",
 	"fundingUrl": "",
 	"isDesktopOnly": false,
-	"main": "build/main.js"
+	"main": "main.js"
 }

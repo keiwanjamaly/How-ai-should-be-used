@@ -2,7 +2,7 @@
   "name": "hello-world-panel",
   "version": "1.0.0",
   "description": "Obsidian plugin showing Hello World panel on the right side",
-  "main": "main.js",
+  "main": "build/main.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch"

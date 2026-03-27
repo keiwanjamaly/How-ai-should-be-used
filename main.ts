@@ -16,6 +16,12 @@ export default class HelloWorldPanel extends Plugin {
 
   async activateView() {
     const workspace = this.app.workspace;
+
+    const leaves = workspace.getLeavesOfType('hello-world-view');
+    if (leaves.length > 0) {
+      workspace.revealLeaf(leaves[0]);
+      return;
+    }
     
     const rightLeaf = workspace.getRightLeaf(false);
     if (!rightLeaf) return;
