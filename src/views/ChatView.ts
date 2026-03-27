@@ -1,4 +1,4 @@
-import { ItemView, Notice, WorkspaceLeaf } from "obsidian";
+import { ItemView, Notice, WorkspaceLeaf, TFile } from "obsidian";
 import type ObsidianAIChatPlugin from "../main";
 import type { LLMStrategy } from "../strategies/LLMStrategy";
 import { ChatRole, type ChatMessage } from "../types";
@@ -12,8 +12,11 @@ export class ChatView extends ItemView {
   private sendButtonEl!: HTMLButtonElement;
   private stopButtonEl!: HTMLButtonElement;
   private clearButtonEl!: HTMLButtonElement;
+  private contextToggleEl!: HTMLButtonElement;
+  private contextBadgeEl!: HTMLDivElement;
   private currentAbortController: AbortController | null = null;
   private busy = false;
+  private includeFileContext = true;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -48,9 +51,22 @@ export class ChatView extends ItemView {
     });
     this.clearButtonEl.addEventListener("click", () => this.clearConversation());
 
+    this.contextToggleEl = header.createEl("button", {
+      cls: "oa-chat-context-toggle",
+      text: "📎",
+      attr: {
+        title: "Toggle file context inclusion",
+      },
+    });
+    this.contextToggleEl.addEventListener("click", () => this.toggleFileContext());
+    this.updateContextToggleState();
+
     this.messagesEl = root.createDiv({ cls: "oa-chat-messages" });
 
     const composer = root.createDiv({ cls: "oa-chat-composer" });
+
+    this.contextBadgeEl = composer.createDiv({ cls: "oa-chat-context-badge" });
+    this.updateContextBadge();
     this.inputEl = composer.createEl("textarea", {
       cls: "oa-chat-input",
       attr: {
@@ -82,11 +98,74 @@ export class ChatView extends ItemView {
     });
 
     this.updateBusyState(false);
+
+    // Listen for active file changes
+    this.registerEvent(
+      this.app.workspace.on("active-leaf-change", () => {
+        this.updateContextBadge();
+      })
+    );
   }
 
   async onClose(): Promise<void> {
     this.stopGeneration();
     this.containerEl.empty();
+  }
+
+  private toggleFileContext(): void {
+    this.includeFileContext = !this.includeFileContext;
+    this.updateContextToggleState();
+    this.updateContextBadge();
+  }
+
+  private updateContextToggleState(): void {
+    this.contextToggleEl.toggleClass("oa-chat-context-active", this.includeFileContext);
+    this.contextToggleEl.toggleClass("oa-chat-context-inactive", !this.includeFileContext);
+  }
+
+  private getActiveFile(): TFile | null {
+    return this.app.workspace.getActiveFile();
+  }
+
+  private updateContextBadge(): void {
+    if (!this.includeFileContext) {
+      this.contextBadgeEl.setText("");
+      this.contextBadgeEl.hide();
+      return;
+    }
+
+    const file = this.getActiveFile();
+    if (file) {
+      this.contextBadgeEl.setText(`📎 ${file.name}`);
+      this.contextBadgeEl.show();
+    } else {
+      this.contextBadgeEl.setText("");
+      this.contextBadgeEl.hide();
+    }
+  }
+
+  private async buildFileContextMessage(): Promise<ChatMessage | null> {
+    if (!this.includeFileContext) {
+      return null;
+    }
+
+    const file = this.getActiveFile();
+    if (!file) {
+      return null;
+    }
+
+    try {
+      const content = await this.app.vault.cachedRead(file);
+      const contextContent = `The user has the following note open ("${file.name}"):\n---\n${content}\n---\nRefer to this note when answering the user's questions.`;
+
+      return {
+        role: ChatRole.System,
+        content: contextContent,
+      };
+    } catch (error) {
+      console.error("Failed to read active file:", error);
+      return null;
+    }
   }
 
   private updateBusyState(isBusy: boolean): void {
@@ -129,9 +208,9 @@ export class ChatView extends ItemView {
   }
 
   /**
-   * Builds the request messages array for the LLM, prepending the system prompt if set.
+   * Builds the request messages array for the LLM, prepending the system prompt and active file context if available.
    */
-  private buildRequestMessages(): ChatMessage[] {
+  private async buildRequestMessages(): Promise<ChatMessage[]> {
     const requestMessages: ChatMessage[] = [];
 
     const systemPrompt = this.plugin.settings.systemPrompt.trim();
@@ -140,6 +219,12 @@ export class ChatView extends ItemView {
         role: ChatRole.System,
         content: systemPrompt,
       });
+    }
+
+    // Add active file context if available
+    const fileContext = await this.buildFileContextMessage();
+    if (fileContext) {
+      requestMessages.push(fileContext);
     }
 
     // Include all messages with non-empty content
@@ -212,7 +297,7 @@ export class ChatView extends ItemView {
     this.appendMessage(userMessage);
 
     // Build request messages BEFORE adding the assistant placeholder
-    const requestMessages = this.buildRequestMessages();
+    const requestMessages = await this.buildRequestMessages();
 
     // Add assistant placeholder (not included in request - it's empty)
     const assistantMessage: ChatMessage = {

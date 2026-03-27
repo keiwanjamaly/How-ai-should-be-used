@@ -83,6 +83,30 @@
   background: transparent;
 }
 
+.oa-chat-context-toggle {
+  padding: 4px 8px;
+  font-size: 14px;
+  border: 1px solid var(--background-modifier-border);
+  background: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.oa-chat-context-toggle.oa-chat-context-active {
+  background: var(--interactive-accent);
+  border-color: var(--interactive-accent);
+}
+
+.oa-chat-context-toggle.oa-chat-context-inactive {
+  opacity: 0.5;
+}
+
+.oa-chat-context-badge {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  padding: 4px 0;
+}
+
 .oa-hidden {
   display: none;
 }
