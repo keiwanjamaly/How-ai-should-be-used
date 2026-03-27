@@ -114,3 +114,262 @@
 .oa-settings-textarea {
   width: 100%;
 }
+
+/* Diff View Styles */
+.oa-diff-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.oa-diff-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+}
+
+.oa-diff-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.oa-diff-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.oa-diff-stats-text {
+  font-family: monospace;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.oa-diff-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.oa-diff-accept {
+  background: var(--interactive-success);
+}
+
+.oa-diff-reject {
+  background: var(--interactive-failure);
+}
+
+.oa-diff-container {
+  display: flex;
+  flex: 1;
+  overflow: auto;
+  font-family: var(--font-monospace);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.oa-diff-gutter {
+  display: flex;
+  flex-direction: column;
+  min-width: 50px;
+  background: var(--background-secondary);
+  border-right: 1px solid var(--background-modifier-border);
+  text-align: right;
+  user-select: none;
+}
+
+.oa-diff-gutter-line {
+  padding: 2px 8px;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.oa-diff-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: auto;
+}
+
+.oa-diff-panel-header {
+  padding: 6px 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  background: var(--background-secondary);
+  border-bottom: 1px solid var(--background-modifier-border);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.oa-diff-old .oa-diff-panel-header {
+  color: var(--text-faint);
+}
+
+.oa-diff-new .oa-diff-panel-header {
+  color: var(--text-accent);
+}
+
+.oa-diff-content {
+  display: flex;
+  flex-direction: column;
+}
+
+.oa-diff-line {
+  display: flex;
+  align-items: center;
+  padding: 2px 0;
+  min-height: 24px;
+  white-space: pre;
+  overflow: hidden;
+}
+
+.oa-diff-line:hover {
+  background: var(--background-modifier-hover);
+}
+
+.oa-diff-prefix {
+  display: inline-block;
+  width: 20px;
+  text-align: center;
+  user-select: none;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.oa-diff-line-content {
+  flex: 1;
+  padding: 0 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.oa-diff-added {
+  background: rgba(var(--color-green-rgb), 0.15);
+}
+
+.oa-diff-added .oa-diff-prefix {
+  color: var(--color-green);
+}
+
+.oa-diff-removed {
+  background: rgba(var(--color-red-rgb), 0.15);
+}
+
+.oa-diff-removed .oa-diff-prefix {
+  color: var(--color-red);
+}
+
+.oa-diff-unchanged {
+  background: transparent;
+}
+
+.oa-diff-empty {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--background-secondary),
+    var(--background-secondary) 10px,
+    transparent 10px,
+    transparent 20px
+  );
+  opacity: 0.3;
+}
+
+.oa-diff-line-actions {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  padding-right: 8px;
+}
+
+.oa-diff-line:hover .oa-diff-line-actions {
+  display: flex;
+}
+
+.oa-diff-line-btn {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.15s;
+}
+
+.oa-diff-line-btn:hover {
+  opacity: 1;
+}
+
+.oa-diff-line-accept {
+  background: var(--color-green);
+  color: white;
+}
+
+.oa-diff-line-reject {
+  background: var(--color-red);
+  color: white;
+}
+
+/* Diff Modal Styles */
+.oa-diff-modal {
+  width: 90vw;
+  max-width: 1200px;
+}
+
+.oa-diff-modal .modal-content {
+  display: flex;
+  flex-direction: column;
+  max-height: 80vh;
+}
+
+.oa-diff-modal-content {
+  flex: 1;
+  overflow: auto;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  margin: 16px 0;
+  max-height: 60vh;
+}
+
+.oa-diff-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.oa-diff-modal-footer .setting-item {
+  border: none;
+  padding: 0;
+}
+
+.oa-diff-modal-footer .setting-item-control {
+  gap: 8px;
+}
+
+/* Pending changes indicator */
+.ribbon-button-container .oa-has-pending-changes {
+  position: relative;
+}
+
+.ribbon-button-container .oa-has-pending-changes::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  background: var(--interactive-accent);
+  border-radius: 50%;
+}
