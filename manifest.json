@@ -1,0 +1,11 @@
+{
+	"id": "hello-world-panel",
+	"name": "Hello World Panel",
+	"version": "1.0.0",
+	"minAppVersion": "0.15.0",
+	"description": "Shows a Hello World panel on the right side of Obsidian",
+	"author": "Your Name",
+	"fundingUrl": "",
+	"isDesktopOnly": false,
+	"main": "build/main.js"
+}
