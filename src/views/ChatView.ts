@@ -2,6 +2,10 @@ import { ItemView, Notice, WorkspaceLeaf, TFile } from "obsidian";
 import type ObsidianAIChatPlugin from "../main";
 import type { LLMStrategy } from "../strategies/LLMStrategy";
 import { ChatRole, type ChatMessage } from "../types";
+import { FileChangeParser, type DetectedFileChange } from "../services/FileChangeParser";
+import { DiffService, type FileDiff } from "../services/DiffService";
+import { DiffModal } from "../components/DiffModal";
+import { formatErrorMessage } from "../utils/errorUtils";
 
 export const CHAT_VIEW_TYPE = "obsidian-ai-chat-view";
 
@@ -17,12 +21,16 @@ export class ChatView extends ItemView {
   private currentAbortController: AbortController | null = null;
   private busy = false;
   private includeFileContext = true;
+  private fileChangeParser: FileChangeParser;
+  private detectedAIFileChange: DetectedFileChange | null = null;
+  private messageCleanupCallbacks: Array<() => void> = [];
 
   constructor(
     leaf: WorkspaceLeaf,
     private readonly plugin: ObsidianAIChatPlugin,
   ) {
     super(leaf);
+    this.fileChangeParser = new FileChangeParser(this.app);
   }
 
   getViewType(): string {
@@ -183,6 +191,9 @@ export class ChatView extends ItemView {
 
     this.messages = [];
     this.messagesEl.empty();
+    this.messageCleanupCallbacks.forEach(cleanup => cleanup());
+    this.messageCleanupCallbacks = [];
+    this.detectedAIFileChange = null;
   }
 
   private stopGeneration(): void {
@@ -213,18 +224,124 @@ export class ChatView extends ItemView {
         },
       });
       copyBtn.innerHTML = "📋";
-      copyBtn.addEventListener("click", () => {
+      
+      const clickHandler = () => {
         navigator.clipboard.writeText(message.content).then(() => {
           copyBtn.innerHTML = "✅";
           setTimeout(() => {
             copyBtn.innerHTML = "📋";
           }, 2000);
         });
+      };
+      
+      copyBtn.addEventListener("click", clickHandler);
+      
+      // Track for cleanup
+      this.messageCleanupCallbacks.push(() => {
+        copyBtn.removeEventListener("click", clickHandler);
       });
     }
 
     this.messagesEl.scrollTo({ top: this.messagesEl.scrollHeight });
     return content;
+  }
+
+  /**
+   * Detect and handle file modification proposals from AI
+   */
+  private async detectAndHandleFileChange(
+    messageEl: HTMLDivElement, 
+    response: string
+  ): Promise<void> {
+    const activeFile = this.getActiveFile();
+    if (!activeFile) return;
+
+    // Check if response contains file modification
+    if (!this.fileChangeParser.hasFileModification(response)) return;
+
+    // Parse the change
+    const detectedChange = this.fileChangeParser.parseAIResponse(response, activeFile);
+    if (!detectedChange) return;
+
+    // Get current file content
+    try {
+      const currentContent = await this.app.vault.read(activeFile);
+      detectedChange.originalContent = currentContent;
+      this.detectedAIFileChange = detectedChange;
+
+      // Add "Apply Changes" button to the message
+      const actionsEl = messageEl.createDiv({ cls: "oa-chat-message-actions" });
+      
+      const applyBtn = actionsEl.createEl("button", {
+        cls: "mod-cta oa-chat-apply-btn",
+        text: "📝 Review & Apply Changes",
+        attr: {
+          title: "Review changes in diff view and apply selectively",
+        },
+      });
+      
+      applyBtn.addEventListener("click", () => {
+        void this.showDiffForChanges(detectedChange);
+      });
+
+      new Notice("AI proposed file changes - click 'Review & Apply Changes' to review");
+    } catch (error) {
+      console.error("Failed to read file for change detection:", error);
+    }
+  }
+
+  /**
+   * Show diff modal for AI-proposed changes
+   */
+  private async showDiffForChanges(change: DetectedFileChange): Promise<void> {
+    const diffService = new DiffService(this.app);
+    
+    // Create the diff
+    const fileDiff: FileDiff = diffService.createFileDiff(
+      change.file.path,
+      change.originalContent,
+      change.proposedContent
+    );
+
+    // Check if there are actual changes
+    if (!diffService.hasChanges(fileDiff)) {
+      new Notice("No changes detected in AI response");
+      return;
+    }
+
+    // Show the diff modal
+    const pendingDiff = {
+      file: change.file,
+      diff: fileDiff,
+      timestamp: Date.now(),
+    };
+
+    new DiffModal(this.app, pendingDiff, async (result) => {
+      if (result.action === "accept" && result.content) {
+        try {
+          this.plugin.markAsSelfModified(change.file.path);
+          await diffService.acceptChanges(change.file, result.content);
+          new Notice("Changes applied successfully");
+          this.detectedAIFileChange = null;
+        } catch (error) {
+          new Notice(`Failed to apply changes: ${formatErrorMessage(error)}`);
+        }
+      } else if (result.action === "cherry-pick" && result.content) {
+        try {
+          this.plugin.markAsSelfModified(change.file.path);
+          await diffService.acceptChanges(change.file, result.content);
+          const accepted = result.acceptedLines?.size || 0;
+          const rejected = result.rejectedLines?.size || 0;
+          new Notice(`Applied ${accepted} changes, rejected ${rejected}`);
+          this.detectedAIFileChange = null;
+        } catch (error) {
+          new Notice(`Failed to apply selected changes: ${formatErrorMessage(error)}`);
+        }
+      } else if (result.action === "reject") {
+        new Notice("Changes rejected");
+        this.detectedAIFileChange = null;
+      }
+    }).open();
   }
 
   /**
@@ -280,7 +397,7 @@ export class ChatView extends ItemView {
       if (error instanceof Error && error.name === "AbortError") {
         assistantMessage.content = assistantMessage.content || "[Stopped]";
       } else {
-        const message = error instanceof Error ? error.message : "Unknown error";
+        const message = formatErrorMessage(error);
         assistantMessage.content = `Error: ${message}`;
         new Notice(`AI request failed: ${message}`);
       }
@@ -289,6 +406,9 @@ export class ChatView extends ItemView {
     } finally {
       this.currentAbortController = null;
       this.updateBusyState(false);
+      
+      // After streaming completes, check for file modifications
+      await this.detectAndHandleFileChange(assistantContentEl, assistantMessage.content);
     }
   }
 
