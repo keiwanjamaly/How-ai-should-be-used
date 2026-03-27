@@ -40,6 +40,16 @@
   white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.4;
+  cursor: text;
+  -webkit-user-select: text !important;
+  user-select: text !important;
+}
+
+.oa-chat-message-content ::selection,
+.oa-chat-message-content::selection {
+  background: Highlight !important;
+  color: HighlightText !important;
+  -webkit-text-fill-color: HighlightText !important;
 }
 
 .oa-chat-user {
@@ -59,6 +69,40 @@
   background: var(--background-secondary);
   color: var(--text-normal);
   border: 1px solid var(--background-modifier-border);
+}
+
+.oa-chat-message {
+  position: relative;
+}
+
+.oa-chat-copy-btn {
+  position: absolute;
+  top: 4px;
+  right: 8%;
+  padding: 4px 8px;
+  font-size: 12px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+  z-index: 10;
+}
+
+.oa-chat-user:hover .oa-chat-copy-btn,
+.oa-chat-assistant:hover .oa-chat-copy-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.oa-chat-copy-btn:hover {
+  background: var(--background-modifier-hover);
+}
+
+.oa-chat-copy-btn:active {
+  transform: scale(0.95);
 }
 
 .oa-chat-composer {
