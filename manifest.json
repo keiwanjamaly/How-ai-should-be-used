@@ -1,9 +1,9 @@
 {
-	"id": "hello-world-panel",
-	"name": "Hello World Panel",
+	"id": "obsidian-ai-chat",
+	"name": "Obsidian AI Chat",
 	"version": "1.0.0",
 	"minAppVersion": "0.15.0",
-	"description": "Shows a Hello World panel on the right side of Obsidian",
+	"description": "Chat with LLMs from a sidebar panel in Obsidian",
 	"author": "Your Name",
 	"fundingUrl": "",
 	"isDesktopOnly": false,

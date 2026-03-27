@@ -1,0 +1,92 @@
+.oa-chat-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  gap: 12px;
+  padding: 12px;
+}
+
+.oa-chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.oa-chat-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.oa-chat-messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-right: 2px;
+}
+
+.oa-chat-message {
+  display: flex;
+}
+
+.oa-chat-message-content {
+  max-width: 92%;
+  border-radius: 10px;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.4;
+}
+
+.oa-chat-user {
+  justify-content: flex-end;
+}
+
+.oa-chat-user .oa-chat-message-content {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.oa-chat-assistant {
+  justify-content: flex-start;
+}
+
+.oa-chat-assistant .oa-chat-message-content {
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  border: 1px solid var(--background-modifier-border);
+}
+
+.oa-chat-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.oa-chat-input {
+  width: 100%;
+  resize: vertical;
+  min-height: 84px;
+}
+
+.oa-chat-controls {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.oa-chat-stop {
+  background: transparent;
+}
+
+.oa-hidden {
+  display: none;
+}
+
+.oa-settings-textarea {
+  width: 100%;
+}

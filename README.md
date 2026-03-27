@@ -1,6 +1,12 @@
-# Hello World Panel
+# Obsidian AI Chat
 
-Obsidian plugin that shows a "Hello World" panel on the right side.
+Obsidian plugin that adds a right-sidebar chat panel for talking to LLMs.
+
+Current backend strategy implementation:
+- OpenRouter
+
+Planned for later:
+- LiteLLM proxy backend
 
 ## Setup
 
@@ -9,13 +15,15 @@ npm install
 npm run build
 ```
 
+The build output is `main.js` in the project root.
+
 ## Installation
 
 Copy this folder to your vault's `.obsidian/plugins/` directory:
 
 ```bash
 # From your vault's plugin folder
-cp -r /path/to/this/folder .obsidian/plugins/hello-world-panel
+cp -r /path/to/this/folder .obsidian/plugins/obsidian-ai-chat
 ```
 
 ## Development
@@ -27,7 +35,7 @@ npm run build
 
 Then copy to vault:
 ```bash
-rm -rf .obsidian/plugins/hello-world-panel && cp -r /path/to/this/folder .obsidian/plugins/hello-world-panel
+rm -rf .obsidian/plugins/obsidian-ai-chat && cp -r /path/to/this/folder .obsidian/plugins/obsidian-ai-chat
 ```
 
 ## Hot Reload

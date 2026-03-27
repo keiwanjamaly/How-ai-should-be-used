@@ -1,16 +1,19 @@
 {
-  "name": "hello-world-panel",
+  "name": "obsidian-ai-chat",
   "version": "1.0.0",
-  "description": "Obsidian plugin showing Hello World panel on the right side",
-  "main": "build/main.js",
+  "description": "Obsidian plugin for chatting with LLMs",
+  "main": "main.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "dev": "tsc -p tsconfig.json --watch"
+    "build": "node esbuild.config.mjs production",
+    "dev": "node esbuild.config.mjs",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "deploy": "npm run build && mkdir -p \"${OBSIDIAN_PLUGIN_PATH:?Set OBSIDIAN_PLUGIN_PATH}\" && cp main.js manifest.json styles.css \"$OBSIDIAN_PLUGIN_PATH\""
   },
   "keywords": ["obsidian", "plugin"],
   "author": "",
   "license": "MIT",
   "devDependencies": {
+    "esbuild": "^0.27.0",
     "obsidian": "^1.6.0",
     "typescript": "^5.0.0"
   }
