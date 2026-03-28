@@ -68,6 +68,19 @@ export class ObsidianAIChatSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
+      .setName("OCR model")
+      .setDesc("Model used to extract text from uploaded PDF files. Must support document input (e.g. mistral/mistral-ocr-latest).")
+      .addText((text) =>
+        text
+          .setPlaceholder("mistral/mistral-ocr-latest")
+          .setValue(this.plugin.settings.ocrModel)
+          .onChange(async (value) => {
+            this.plugin.settings.ocrModel = value.trim() || "mistral/mistral-ocr-latest";
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
       .setName("System prompt")
       .setDesc("Optional default system prompt added before each chat request.")
       .addTextArea((text) => {

@@ -841,6 +841,77 @@
   font-size: 0.8rem;
 }
 
+/* ===== Badges Row ===== */
+.oa-chat-badges-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-height: 0;
+}
+
+/* ===== PDF Badge ===== */
+.oa-chat-pdf-badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  padding: 2px 6px 2px 4px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+}
+
+.oa-chat-pdf-badge .svg-icon {
+  width: 12px;
+  height: 12px;
+}
+
+.oa-chat-pdf-badge-dismiss {
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-s);
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.oa-chat-pdf-badge-dismiss:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+/* ===== PDF Upload Button ===== */
+.oa-chat-pdf-upload {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-s);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.oa-chat-pdf-upload:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.oa-chat-pdf-upload:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* ===== Edit Message ===== */
 .oa-chat-edit-btn {
   width: 24px;
