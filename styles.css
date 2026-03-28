@@ -103,7 +103,8 @@
 /* ===== Message Bubbles ===== */
 .oa-chat-message {
   display: flex;
-  position: relative;
+  flex-direction: column;
+  gap: 4px;
   animation: oa-message-appear 0.2s ease-out;
 }
 
@@ -128,7 +129,7 @@
 }
 
 .oa-chat-user {
-  justify-content: flex-end;
+  align-items: flex-end;
 }
 
 .oa-chat-user .oa-chat-message-content {
@@ -139,7 +140,7 @@
 }
 
 .oa-chat-assistant {
-  justify-content: flex-start;
+  align-items: flex-start;
 }
 
 .oa-chat-assistant .oa-chat-message-content {
@@ -150,42 +151,37 @@
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 
-/* ===== Copy Button ===== */
+/* ===== Message Toolbar ===== */
+.oa-chat-message-toolbar {
+  display: flex;
+  flex-direction: row;
+  gap: 2px;
+}
+
 .oa-chat-copy-btn {
-  position: absolute;
-  top: -4px;
-  right: 4px;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
-  background: var(--background-primary);
-  border: 1px solid var(--background-modifier-border);
+  background: transparent;
+  border: none !important;
+  box-shadow: none !important;
   border-radius: var(--radius-s);
   cursor: pointer;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.15s ease, background 0.15s ease;
-  z-index: 10;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  color: var(--text-muted);
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
 .oa-chat-copy-btn .svg-icon {
   width: 14px;
   height: 14px;
-  color: var(--text-muted);
-}
-
-.oa-chat-user:hover .oa-chat-copy-btn,
-.oa-chat-assistant:hover .oa-chat-copy-btn {
-  opacity: 1;
-  pointer-events: auto;
 }
 
 .oa-chat-copy-btn:hover {
   background: var(--background-modifier-hover);
+  color: var(--text-normal);
 }
 
 .oa-chat-copy-btn:active {

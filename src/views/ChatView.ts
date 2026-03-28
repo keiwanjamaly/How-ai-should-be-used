@@ -241,7 +241,9 @@ export class ChatView extends ItemView {
     content.setText(message.content);
 
     if (message.role !== ChatRole.System) {
-      const copyBtn = wrapper.createEl("button", {
+      const toolbar = wrapper.createDiv({ cls: "oa-chat-message-toolbar" });
+
+      const copyBtn = toolbar.createEl("button", {
         cls: "oa-chat-copy-btn",
         attr: {
           title: "Copy message",
