@@ -96,6 +96,69 @@ export class DiffService {
   }
 
   /**
+   * Build content from selective cherry-pick choices.
+   *
+   * For each diff change line:
+   * - "unchanged" lines are always included.
+   * - "added" lines are included only if their newLineNumber is in acceptedChanges.
+   *   If in rejectedChanges or in neither set, the added line is excluded.
+   * - "removed" lines are excluded (i.e. the removal is accepted) only if their
+   *   oldLineNumber is in acceptedChanges. If in rejectedChanges the line is kept.
+   *   If in neither set, the line is kept (removal is not applied) — this "keep
+   *   original" default for unselected removals may be surprising; see tests.
+   */
+  buildContentFromSelections(
+    changes: DiffChange[],
+    acceptedChanges: Set<number>,
+    rejectedChanges: Set<number>
+  ): string {
+    const lines: string[] = [];
+
+    for (const change of changes) {
+      if (change.type === "unchanged") {
+        lines.push(change.content);
+      } else if (change.type === "added") {
+        const lineNum = change.newLineNumber!;
+        if (acceptedChanges.has(lineNum)) {
+          lines.push(change.content);
+        }
+        // If rejected or unselected, the added line is not included
+      } else if (change.type === "removed") {
+        const lineNum = change.oldLineNumber!;
+        if (acceptedChanges.has(lineNum)) {
+          // Removal accepted — line is dropped
+        } else {
+          // Rejected or unselected — keep the original line
+          lines.push(change.content);
+        }
+      }
+    }
+
+    return lines.join("\n") + "\n";
+  }
+
+  /**
+   * Generate a cherry-pick result from a FileDiff and selection sets.
+   * Returns the built content along with the accepted/rejected sets for reporting.
+   */
+  generateCherryPickResult(
+    diff: FileDiff,
+    acceptedChanges: Set<number>,
+    rejectedChanges: Set<number>
+  ): { content: string; acceptedLines: Set<number>; rejectedLines: Set<number> } {
+    const content = this.buildContentFromSelections(
+      diff.changes,
+      acceptedChanges,
+      rejectedChanges
+    );
+    return {
+      content,
+      acceptedLines: acceptedChanges,
+      rejectedLines: rejectedChanges,
+    };
+  }
+
+  /**
    * Check if there are any actual changes in the diff
    */
   hasChanges(diff: FileDiff): boolean {
