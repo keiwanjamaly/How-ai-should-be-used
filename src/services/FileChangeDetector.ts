@@ -13,10 +13,10 @@ export class FileChangeDetector extends Component {
   private readonly diffService: DiffService;
   private readonly baselines = new Map<string, string>();
   private readonly pendingDiffs = new Map<string, PendingDiff>();
-  private readonly selfModifiedPaths = new Set<string>();
+  private readonly aiModifiedPaths = new Set<string>();
   private changeHandler?: ChangeHandler;
   private isEnabled = true;
-  private editorCheckInterval?: number;
+  private editorCheckInterval: number | null = null;
 
   constructor(private readonly app: App) {
     super();
@@ -35,6 +35,13 @@ export class FileChangeDetector extends Component {
    */
   setEnabled(enabled: boolean): void {
     this.isEnabled = enabled;
+  }
+
+  /**
+   * Get the current enabled state of change detection
+   */
+  getEnabled(): boolean {
+    return this.isEnabled;
   }
 
   /**
@@ -61,7 +68,7 @@ export class FileChangeDetector extends Component {
       if (this.isEnabled) {
         this.checkOpenEditors();
       }
-    }, 1000) as unknown as number;
+    }, 1000);
 
     // Initialize baselines for currently open files
     this.updateBaselines();
@@ -78,10 +85,10 @@ export class FileChangeDetector extends Component {
   }
 
   /**
-   * Mark a file as self-modified to prevent triggering diff detection
+   * Mark a file as modified by the AI to prevent triggering diff detection
    */
   markAsSelfModified(path: string): void {
-    this.selfModifiedPaths.add(path);
+    this.aiModifiedPaths.add(path);
     // Remove from pending diffs if present
     this.pendingDiffs.delete(path);
   }
@@ -125,14 +132,26 @@ export class FileChangeDetector extends Component {
   }
 
   /**
+   * Type guard to check if a view is a MarkdownView
+   */
+  private isMarkdownView(view: unknown): view is MarkdownView {
+    return view instanceof MarkdownView;
+  }
+
+  /**
    * Check open editors for changes
    */
   private checkOpenEditors(): void {
     const leaves = this.app.workspace.getLeavesOfType("markdown");
     
+    // Skip if no editors are open to save resources
+    if (leaves.length === 0) return;
+    
     for (const leaf of leaves) {
-      const view = leaf.view as MarkdownView;
-      if (view.file && view.editor && view.getMode() === "source") {
+      const view = leaf.view;
+      if (!this.isMarkdownView(view) || !view.file || !view.editor) continue;
+      
+      if (view.getMode() === "source") {
         const content = view.editor.getValue();
         const baseline = this.baselines.get(view.file.path);
         
@@ -151,17 +170,20 @@ export class FileChangeDetector extends Component {
   private async updateBaselines(): Promise<void> {
     const leaves = this.app.workspace.getLeavesOfType("markdown");
     
-    for (const leaf of leaves) {
-      const view = leaf.view as MarkdownView;
-      if (view.file && view.editor) {
-        try {
-          const content = await this.app.vault.read(view.file);
-          this.baselines.set(view.file.path, content);
-        } catch (error) {
-          console.error(`Failed to read baseline for ${view.file.path}:`, error);
-        }
+    // Process files in parallel for better performance
+    const promises = leaves.map(async (leaf) => {
+      const view = leaf.view;
+      if (!this.isMarkdownView(view) || !view.file) return;
+      
+      try {
+        const content = await this.app.vault.read(view.file);
+        this.baselines.set(view.file.path, content);
+      } catch (error) {
+        console.error(`Failed to read baseline for ${view.file.path}:`, error);
       }
-    }
+    });
+    
+    await Promise.all(promises);
   }
 
   /**
@@ -171,9 +193,9 @@ export class FileChangeDetector extends Component {
     if (!this.isEnabled) return;
     if (file.extension !== "md") return;
 
-    // Skip if this was a self-modification
-    if (this.selfModifiedPaths.has(file.path)) {
-      this.selfModifiedPaths.delete(file.path);
+    // Skip if this was modified by the AI
+    if (this.aiModifiedPaths.has(file.path)) {
+      this.aiModifiedPaths.delete(file.path);
       return;
     }
 
