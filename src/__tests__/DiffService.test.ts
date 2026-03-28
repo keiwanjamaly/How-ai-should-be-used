@@ -4,29 +4,8 @@
  */
 
 import { diffLines } from "diff";
+import { assertEqual, assertTrue, assertFalse, runTests } from "./testUtils.ts";
 
-// Simple test assertions
-function assertEqual(actual: unknown, expected: unknown, message?: string): void {
-  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-    throw new Error(
-      message || `Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`
-    );
-  }
-}
-
-function assertTrue(condition: boolean, message?: string): void {
-  if (!condition) {
-    throw new Error(message || "Expected true, got false");
-  }
-}
-
-function assertFalse(condition: boolean, message?: string): void {
-  if (condition) {
-    throw new Error(message || "Expected false, got true");
-  }
-}
-
-// Test Diff calculation
 function testDiffCalculation(): void {
   console.log("Test: Diff Calculation");
 
@@ -50,10 +29,9 @@ function testDiffCalculation(): void {
   );
   assertTrue(hasModifiedLine, "Should detect modified line");
 
-  console.log("✓ Diff calculation works correctly");
+  console.log("  PASSED");
 }
 
-// Test with empty content
 function testEmptyContent(): void {
   console.log("Test: Empty Content");
 
@@ -66,10 +44,9 @@ function testEmptyContent(): void {
   assertTrue(changes[0].added, "Change should be marked as added");
   assertEqual(changes[0].value, "New line\n", "Added value should match");
 
-  console.log("✓ Empty content handling works correctly");
+  console.log("  PASSED");
 }
 
-// Test no changes
 function testNoChanges(): void {
   console.log("Test: No Changes");
 
@@ -82,10 +59,9 @@ function testNoChanges(): void {
   assertFalse(changes[0].added, "Should not be marked as added");
   assertFalse(changes[0].removed, "Should not be marked as removed");
 
-  console.log("✓ No changes detection works correctly");
+  console.log("  PASSED");
 }
 
-// Test line counting
 function testLineCounting(): void {
   console.log("Test: Line Counting");
 
@@ -97,17 +73,15 @@ function testLineCounting(): void {
   let addedCount = 0;
   for (const change of changes) {
     if (change.added) {
-      // Count lines in added block
       addedCount += change.value.split("\n").length - 1;
     }
   }
 
   assertEqual(addedCount, 2, "Should count 2 added lines");
 
-  console.log("✓ Line counting works correctly");
+  console.log("  PASSED");
 }
 
-// Test whitespace handling
 function testWhitespaceHandling(): void {
   console.log("Test: Whitespace Handling");
 
@@ -116,14 +90,12 @@ function testWhitespaceHandling(): void {
 
   const changes = diffLines(oldContent, newContent);
 
-  // Line-based diff should detect this as a change
   const hasChange = changes.some((change) => change.added || change.removed);
   assertTrue(hasChange, "Should detect trailing whitespace change");
 
-  console.log("✓ Whitespace handling works correctly");
+  console.log("  PASSED");
 }
 
-// Test complex changes
 function testComplexChanges(): void {
   console.log("Test: Complex Changes");
 
@@ -154,46 +126,14 @@ Final line added
   assertTrue(addedChanges > 0, "Should have added changes");
   assertTrue(removedChanges > 0, "Should have removed changes");
 
-  console.log("✓ Complex changes detection works correctly");
+  console.log("  PASSED");
 }
 
-// Run all tests
-function runTests(): void {
-  console.log("\n=== DiffService Tests ===\n");
-
-  const tests = [
-    testDiffCalculation,
-    testEmptyContent,
-    testNoChanges,
-    testLineCounting,
-    testWhitespaceHandling,
-    testComplexChanges,
-  ];
-
-  let passed = 0;
-  let failed = 0;
-
-  for (const test of tests) {
-    try {
-      test();
-      passed++;
-    } catch (error) {
-      failed++;
-      console.error(`✗ ${test.name} failed:`, error instanceof Error ? error.message : error);
-    }
-  }
-
-  console.log("\n=== Test Results ===");
-  console.log(`Passed: ${passed}/${tests.length}`);
-  console.log(`Failed: ${failed}/${tests.length}`);
-
-  if (failed === 0) {
-    console.log("\n✓ All tests passed!");
-  } else {
-    console.log("\n✗ Some tests failed");
-    process.exit(1);
-  }
-}
-
-// Run tests
-runTests();
+runTests("DiffService Tests", [
+  testDiffCalculation,
+  testEmptyContent,
+  testNoChanges,
+  testLineCounting,
+  testWhitespaceHandling,
+  testComplexChanges,
+]);

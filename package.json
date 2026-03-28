@@ -7,7 +7,7 @@
     "build": "node esbuild.config.mjs production",
     "dev": "node esbuild.config.mjs",
     "check": "tsc -p tsconfig.json --noEmit",
-    "test": "npx ts-node src/__tests__/DiffService.test.ts",
+    "test": "npx ts-node --esm src/__tests__/DiffService.test.ts && npx ts-node --esm src/__tests__/mcp.test.ts",
     "deploy": "npm run build && mkdir -p \"${OBSIDIAN_PLUGIN_PATH:?Set OBSIDIAN_PLUGIN_PATH}\" && cp main.js manifest.json styles.css \"$OBSIDIAN_PLUGIN_PATH\""
   },
   "keywords": [
