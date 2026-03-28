@@ -4,8 +4,10 @@ import { PendingDiff } from "../services/FileChangeDetector";
 import { DiffService } from "../services/DiffService";
 
 export interface DiffModalResult {
-  action: "accept" | "reject" | "cancel";
+  action: "accept" | "reject" | "cancel" | "cherry-pick";
   content?: string;
+  acceptedLines?: Set<number>;
+  rejectedLines?: Set<number>;
 }
 
 export type DiffModalCallback = (result: DiffModalResult) => void;

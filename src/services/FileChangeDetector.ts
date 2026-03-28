@@ -37,6 +37,10 @@ export class FileChangeDetector extends Component {
     this.isEnabled = enabled;
   }
 
+  getEnabled(): boolean {
+    return this.isEnabled;
+  }
+
   /**
    * Initialize the detector and start listening for changes
    */

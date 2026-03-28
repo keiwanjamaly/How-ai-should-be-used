@@ -1,7 +1,7 @@
-import { ItemView, Notice, WorkspaceLeaf, TFile } from "obsidian";
+import { ItemView, Notice, WorkspaceLeaf, TFile, setIcon } from "obsidian";
 import type ObsidianAIChatPlugin from "../main";
 import type { LLMStrategy } from "../strategies/LLMStrategy";
-import { ChatRole, type ChatMessage } from "../types";
+import { ChatRole, type ChatMessage, type ChatSession } from "../types";
 import { FileChangeParser, type DetectedFileChange } from "../services/FileChangeParser";
 import { DiffService, type FileDiff } from "../services/DiffService";
 import { DiffModal } from "../components/DiffModal";
@@ -15,15 +15,17 @@ export class ChatView extends ItemView {
   private inputEl!: HTMLTextAreaElement;
   private sendButtonEl!: HTMLButtonElement;
   private stopButtonEl!: HTMLButtonElement;
-  private clearButtonEl!: HTMLButtonElement;
+  private newChatButtonEl!: HTMLButtonElement;
   private contextToggleEl!: HTMLButtonElement;
   private contextBadgeEl!: HTMLDivElement;
+  private sessionSelectorEl!: HTMLSelectElement;
+  private currentSessionId: string | null = null;
   private currentAbortController: AbortController | null = null;
   private busy = false;
   private includeFileContext = true;
   private fileChangeParser: FileChangeParser;
   private detectedAIFileChange: DetectedFileChange | null = null;
-  private messageCleanupCallbacks: Array<() => void> = [];
+  private messageCleanupMap = new Map<ChatMessage, () => void>();
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -53,13 +55,9 @@ export class ChatView extends ItemView {
     const header = root.createDiv({ cls: "oa-chat-header" });
     header.createEl("h2", { text: "AI Chat" });
 
-    this.clearButtonEl = header.createEl("button", {
-      cls: "mod-cta oa-chat-clear",
-      text: "Clear",
-    });
-    this.clearButtonEl.addEventListener("click", () => this.clearConversation());
+    const headerActions = header.createDiv({ cls: "oa-chat-header-actions" });
 
-    this.contextToggleEl = header.createEl("button", {
+    this.contextToggleEl = headerActions.createEl("button", {
       cls: "oa-chat-context-toggle",
       text: "📎",
       attr: {
@@ -68,6 +66,24 @@ export class ChatView extends ItemView {
     });
     this.contextToggleEl.addEventListener("click", () => this.toggleFileContext());
     this.updateContextToggleState();
+
+    this.sessionSelectorEl = headerActions.createEl("select", {
+      cls: "oa-chat-session-selector",
+      attr: { title: "Switch conversation", "aria-label": "Switch conversation" },
+    });
+    this.sessionSelectorEl.addEventListener("change", () => {
+      const id = this.sessionSelectorEl.value;
+      if (id && id !== this.currentSessionId) {
+        this.loadSession(id);
+      }
+    });
+
+    this.newChatButtonEl = headerActions.createEl("button", {
+      cls: "oa-chat-new",
+      attr: { title: "New conversation", "aria-label": "New conversation" },
+    });
+    setIcon(this.newChatButtonEl, "plus");
+    this.newChatButtonEl.addEventListener("click", () => this.startNewChat());
 
     this.messagesEl = root.createDiv({ cls: "oa-chat-messages" });
 
@@ -113,10 +129,14 @@ export class ChatView extends ItemView {
         this.updateContextBadge();
       })
     );
+
+    this.restoreLastSession();
   }
 
   async onClose(): Promise<void> {
+    this.saveCurrentSession();
     this.stopGeneration();
+    this.runMessageCleanups();
     this.containerEl.empty();
   }
 
@@ -181,19 +201,138 @@ export class ChatView extends ItemView {
     this.sendButtonEl.disabled = isBusy;
     this.inputEl.disabled = isBusy;
     this.stopButtonEl.toggleClass("oa-hidden", !isBusy);
-    this.clearButtonEl.disabled = isBusy;
+    this.newChatButtonEl.disabled = isBusy;
   }
 
-  private clearConversation(): void {
-    if (this.busy) {
+  private runMessageCleanups(): void {
+    this.messageCleanupMap.forEach((cleanup) => cleanup());
+    this.messageCleanupMap.clear();
+  }
+
+  private generateSessionTitle(messages: ChatMessage[]): string {
+    const firstUser = messages.find(m => m.role === ChatRole.User);
+    if (!firstUser) return "New chat";
+    const text = firstUser.content.trim().replace(/\n/g, " ");
+    return text.length > 40 ? text.slice(0, 40) + "…" : text;
+  }
+
+  private clearMessages(): void {
+    this.messages = [];
+    this.messagesEl.empty();
+    this.runMessageCleanups();
+    this.detectedAIFileChange = null;
+  }
+
+  private saveCurrentSession(): void {
+    const toSave = this.messages.filter(m => m.role !== ChatRole.System);
+    if (toSave.length === 0) return;
+
+    const { chatSessions } = this.plugin.settings;
+    const title = this.generateSessionTitle(toSave);
+    const existing = this.currentSessionId
+      ? chatSessions.find(s => s.id === this.currentSessionId)
+      : null;
+
+    if (existing) {
+      existing.messages = toSave;
+      existing.title = title;
+    } else {
+      const session: ChatSession = {
+        id: crypto.randomUUID(),
+        title,
+        messages: toSave,
+        createdAt: Date.now(),
+      };
+      chatSessions.unshift(session);
+      this.currentSessionId = session.id;
+    }
+
+    if (chatSessions.length > 50) {
+      chatSessions.splice(50);
+    }
+
+    this.plugin.settings.activeSessionId = this.currentSessionId;
+    void this.plugin.saveSettings();
+  }
+
+  private loadSession(id: string): void {
+    this.saveCurrentSession();
+
+    const session = this.plugin.settings.chatSessions.find(s => s.id === id);
+    if (!session) return;
+
+    this.clearMessages();
+    this.messages = [...session.messages];
+    this.currentSessionId = id;
+    this.plugin.settings.activeSessionId = id;
+    void this.plugin.saveSettings();
+
+    for (const msg of this.messages) {
+      this.appendMessage(msg);
+    }
+
+    this.refreshSessionSelector();
+  }
+
+  private startNewChat(): void {
+    if (this.busy) return;
+    this.saveCurrentSession();
+
+    this.clearMessages();
+    this.currentSessionId = null;
+    this.plugin.settings.activeSessionId = null;
+    void this.plugin.saveSettings();
+    this.refreshSessionSelector();
+  }
+
+  private restoreLastSession(): void {
+    const { activeSessionId, chatSessions } = this.plugin.settings;
+    if (activeSessionId) {
+      const session = chatSessions.find(s => s.id === activeSessionId);
+      if (session) {
+        this.messages = [...session.messages];
+        this.currentSessionId = activeSessionId;
+        for (const msg of this.messages) {
+          this.appendMessage(msg);
+        }
+      }
+    }
+    this.refreshSessionSelector();
+  }
+
+  private refreshSessionSelector(): void {
+    this.sessionSelectorEl.empty();
+
+    const { chatSessions } = this.plugin.settings;
+
+    if (chatSessions.length === 0) {
+      const opt = this.sessionSelectorEl.createEl("option", {
+        text: "No history",
+        attr: { value: "" },
+      });
+      opt.disabled = true;
+      opt.selected = true;
       return;
     }
 
-    this.messages = [];
-    this.messagesEl.empty();
-    this.messageCleanupCallbacks.forEach(cleanup => cleanup());
-    this.messageCleanupCallbacks = [];
-    this.detectedAIFileChange = null;
+    for (const session of chatSessions) {
+      const opt = this.sessionSelectorEl.createEl("option", {
+        text: session.title,
+        attr: { value: session.id },
+      });
+      if (session.id === this.currentSessionId) {
+        opt.selected = true;
+      }
+    }
+
+    if (!this.currentSessionId) {
+      const placeholder = this.sessionSelectorEl.createEl("option", {
+        text: "New chat",
+        attr: { value: "" },
+      });
+      placeholder.selected = true;
+      this.sessionSelectorEl.insertBefore(placeholder, this.sessionSelectorEl.firstChild);
+    }
   }
 
   private stopGeneration(): void {
@@ -224,7 +363,7 @@ export class ChatView extends ItemView {
         },
       });
       copyBtn.innerHTML = "📋";
-      
+
       const clickHandler = () => {
         navigator.clipboard.writeText(message.content).then(() => {
           copyBtn.innerHTML = "✅";
@@ -233,11 +372,9 @@ export class ChatView extends ItemView {
           }, 2000);
         });
       };
-      
+
       copyBtn.addEventListener("click", clickHandler);
-      
-      // Track for cleanup
-      this.messageCleanupCallbacks.push(() => {
+      this.messageCleanupMap.set(message, () => {
         copyBtn.removeEventListener("click", clickHandler);
       });
     }
@@ -250,28 +387,24 @@ export class ChatView extends ItemView {
    * Detect and handle file modification proposals from AI
    */
   private async detectAndHandleFileChange(
-    messageEl: HTMLDivElement, 
+    messageEl: HTMLDivElement,
     response: string
   ): Promise<void> {
     const activeFile = this.getActiveFile();
     if (!activeFile) return;
 
-    // Check if response contains file modification
     if (!this.fileChangeParser.hasFileModification(response)) return;
 
-    // Parse the change
     const detectedChange = this.fileChangeParser.parseAIResponse(response, activeFile);
     if (!detectedChange) return;
 
-    // Get current file content
     try {
       const currentContent = await this.app.vault.read(activeFile);
       detectedChange.originalContent = currentContent;
       this.detectedAIFileChange = detectedChange;
 
-      // Add "Apply Changes" button to the message
       const actionsEl = messageEl.createDiv({ cls: "oa-chat-message-actions" });
-      
+
       const applyBtn = actionsEl.createEl("button", {
         cls: "mod-cta oa-chat-apply-btn",
         text: "📝 Review & Apply Changes",
@@ -279,7 +412,7 @@ export class ChatView extends ItemView {
           title: "Review changes in diff view and apply selectively",
         },
       });
-      
+
       applyBtn.addEventListener("click", () => {
         void this.showDiffForChanges(detectedChange);
       });
@@ -295,21 +428,18 @@ export class ChatView extends ItemView {
    */
   private async showDiffForChanges(change: DetectedFileChange): Promise<void> {
     const diffService = new DiffService(this.app);
-    
-    // Create the diff
+
     const fileDiff: FileDiff = diffService.createFileDiff(
       change.file.path,
       change.originalContent,
       change.proposedContent
     );
 
-    // Check if there are actual changes
     if (!diffService.hasChanges(fileDiff)) {
       new Notice("No changes detected in AI response");
       return;
     }
 
-    // Show the diff modal
     const pendingDiff = {
       file: change.file,
       diff: fileDiff,
@@ -358,13 +488,11 @@ export class ChatView extends ItemView {
       });
     }
 
-    // Add active file context if available
     const fileContext = await this.buildFileContextMessage();
     if (fileContext) {
       requestMessages.push(fileContext);
     }
 
-    // Include all messages with non-empty content
     requestMessages.push(
       ...this.messages.filter((message) => message.content.trim()),
     );
@@ -406,8 +534,7 @@ export class ChatView extends ItemView {
     } finally {
       this.currentAbortController = null;
       this.updateBusyState(false);
-      
-      // After streaming completes, check for file modifications
+
       await this.detectAndHandleFileChange(assistantContentEl, assistantMessage.content);
     }
   }
@@ -431,15 +558,12 @@ export class ChatView extends ItemView {
 
     this.inputEl.value = "";
 
-    // Add user message
     const userMessage: ChatMessage = { role: ChatRole.User, content: text };
     this.messages.push(userMessage);
     this.appendMessage(userMessage);
 
-    // Build request messages BEFORE adding the assistant placeholder
     const requestMessages = await this.buildRequestMessages();
 
-    // Add assistant placeholder (not included in request - it's empty)
     const assistantMessage: ChatMessage = {
       role: ChatRole.Assistant,
       content: "",

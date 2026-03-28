@@ -93,6 +93,8 @@ export default class ObsidianAIChatPlugin extends Plugin {
         ...DEFAULT_SETTINGS.openRouter,
         ...loaded?.openRouter,
       },
+      chatSessions: loaded?.chatSessions ?? DEFAULT_SETTINGS.chatSessions,
+      activeSessionId: loaded?.activeSessionId ?? DEFAULT_SETTINGS.activeSessionId,
     };
   }
 
