@@ -7,44 +7,45 @@ import { Notice, Platform } from "obsidian";
 import { spawn, execFile } from "child_process";
 import type { ChildProcess } from "child_process";
 import type {
-	MCPServerConfig,
 	LocalMCPServer,
 	MCPTool,
 	MCPToolResult,
 	MCPServers,
 	ExternalMCPConfig,
 } from "../types/mcp";
-import { getQualifiedToolName, parseQualifiedToolName } from "../types/mcp";
+import { getQualifiedToolName } from "../types/mcp";
 
 /**
- * Cached login-shell PATH, resolved once on first use.
+ * Cached login-shell PATH promise, resolved once on first use.
+ * Storing the promise (not the value) prevents a race condition when
+ * multiple servers call getShellPath() concurrently via Promise.all.
  * On macOS, GUI apps like Obsidian inherit a minimal system PATH that lacks
  * Homebrew, uv/uvx, nvm, etc. We need the full login shell PATH.
  */
-let resolvedShellPath: string | null = null;
+let shellPathPromise: Promise<string> | null = null;
 
 /**
  * Resolve the user's full login-shell PATH by spawning `$SHELL -l -c 'echo $PATH'`.
  * Falls back to process.env.PATH if the shell command fails.
  */
-async function getShellPath(): Promise<string> {
-	if (resolvedShellPath !== null) {
-		return resolvedShellPath;
-	}
-
-	const shell = process.env.SHELL || "/bin/zsh";
-
-	return new Promise((resolve) => {
-		execFile(shell, ["-l", "-c", "echo $PATH"], { timeout: 5000 }, (error, stdout) => {
-			if (error || !stdout.trim()) {
-				resolvedShellPath = process.env.PATH || "";
-			} else {
-				resolvedShellPath = stdout.trim();
-			}
-			resolve(resolvedShellPath);
+function getShellPath(): Promise<string> {
+	if (!shellPathPromise) {
+		shellPathPromise = new Promise((resolve) => {
+			const shell = process.env.SHELL || "/bin/zsh";
+			execFile(shell, ["-l", "-c", "echo $PATH"], { timeout: 5000 }, (error, stdout) => {
+				if (error || !stdout.trim()) {
+					resolve(process.env.PATH || "");
+				} else {
+					resolve(stdout.trim());
+				}
+			});
 		});
-	});
+	}
+	return shellPathPromise;
 }
+
+/** MCP protocol version used in the initialize handshake */
+const MCP_PROTOCOL_VERSION = "2024-11-05";
 
 /**
  * JSON-RPC request structure for MCP protocol
@@ -270,6 +271,13 @@ export class MCPService {
 		};
 
 		return new Promise((resolve, reject) => {
+			// Guard: if stdin is null (process died), reject immediately
+			// instead of silently hanging.
+			if (!process.stdin || !process.stdin.writable) {
+				reject(new Error(`MCP server "${serverName}" stdin is not writable`));
+				return;
+			}
+
 			// Set up timeout
 			const timer = setTimeout(() => {
 				this.pendingRequests.delete(id);
@@ -281,7 +289,7 @@ export class MCPService {
 
 			// Send the request
 			const message = JSON.stringify(request) + "\n";
-			process.stdin?.write(message, (error) => {
+			process.stdin.write(message, (error) => {
 				if (error) {
 					clearTimeout(timer);
 					this.pendingRequests.delete(id);
@@ -313,7 +321,7 @@ export class MCPService {
 		try {
 			// Send initialize request
 			await this.sendRequest(serverName, "initialize", {
-				protocolVersion: "2024-11-05",
+				protocolVersion: MCP_PROTOCOL_VERSION,
 				capabilities: {},
 				clientInfo: {
 					name: "obsidian-ai-chat",
@@ -383,9 +391,12 @@ export class MCPService {
 				isError?: boolean;
 			};
 
+			// Guard against unexpected content shapes from MCP servers
+			const content = Array.isArray(toolResult.content) ? toolResult.content : [];
+
 			if (toolResult.isError) {
-				const errorText = toolResult.content
-					?.map((c) => c.text)
+				const errorText = content
+					.map((c) => c.text)
 					.filter(Boolean)
 					.join("\n");
 				return {
@@ -394,8 +405,8 @@ export class MCPService {
 				};
 			}
 
-			const output = toolResult.content
-				?.map((c) => c.text)
+			const output = content
+				.map((c) => c.text)
 				.filter(Boolean)
 				.join("\n");
 
