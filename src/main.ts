@@ -1,4 +1,4 @@
-import { Plugin, TFile, Notice } from "obsidian";
+import { Plugin, TFile, Notice, Platform } from "obsidian";
 import { ObsidianAIChatSettingTab } from "./settings";
 import { OpenRouterStrategy } from "./strategies/OpenRouterStrategy";
 import type { LLMStrategy } from "./strategies/LLMStrategy";
@@ -6,13 +6,16 @@ import { CHAT_VIEW_TYPE, ChatView } from "./views/ChatView";
 import { DEFAULT_SETTINGS, type ObsidianAIChatSettings } from "./types";
 import { FileChangeDetector } from "./services/FileChangeDetector";
 import { DiffService } from "./services/DiffService";
+import { MCPService } from "./services/MCPService";
 import { DiffModal, ChangeNotificationModal } from "./components/DiffModal";
 import { formatErrorMessage } from "./utils/errorUtils";
+import { mergeMCPServers } from "./types/mcp";
 
 export default class ObsidianAIChatPlugin extends Plugin {
   settings!: ObsidianAIChatSettings;
   fileChangeDetector!: FileChangeDetector;
   diffService!: DiffService;
+  mcpService!: MCPService;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -20,6 +23,7 @@ export default class ObsidianAIChatPlugin extends Plugin {
     // Initialize services
     this.diffService = new DiffService(this.app);
     this.fileChangeDetector = new FileChangeDetector(this.app);
+    this.mcpService = new MCPService();
     
     // Set up change detection
     this.fileChangeDetector.onChange((pendingDiff) => {
@@ -29,6 +33,9 @@ export default class ObsidianAIChatPlugin extends Plugin {
     // Register the file change detector as a component
     this.addChild(this.fileChangeDetector);
     this.fileChangeDetector.initialize();
+
+    // Initialize MCP servers if enabled
+    await this.initializeMCP();
 
     // Register views
     this.registerView(CHAT_VIEW_TYPE, (leaf) => new ChatView(leaf, this));
@@ -75,12 +82,50 @@ export default class ObsidianAIChatPlugin extends Plugin {
     });
   }
 
-  onunload(): void {
+  async onunload(): Promise<void> {
     this.app.workspace.detachLeavesOfType(CHAT_VIEW_TYPE);
+    await this.mcpService?.shutdown();
   }
 
   createStrategy(): LLMStrategy {
-    return new OpenRouterStrategy(this.settings.openRouter);
+    const mcpTools = this.mcpService?.getAvailableTools(this.settings.mcp.enabledTools) ?? [];
+    const executeTool = this.mcpService
+      ? async (toolName: string, args: unknown) => this.mcpService.executeTool(toolName, args)
+      : undefined;
+    return new OpenRouterStrategy(this.settings.openRouter, mcpTools, executeTool);
+  }
+
+  /**
+   * Initialize MCP servers based on current settings
+   */
+  async initializeMCP(): Promise<void> {
+    // Only initialize on desktop platforms
+    if (!Platform.isMobile) {
+      if (this.settings.mcp.enabled) {
+        try {
+          // Load servers from config file if path is set
+          let fileServers = {};
+          if (this.settings.mcp.configFilePath) {
+            const config = await MCPService.loadConfigFromFile(this.settings.mcp.configFilePath);
+            if (config?.mcp) {
+              fileServers = config.mcp;
+            }
+          }
+
+          // Merge with custom MCPs
+          const allServers = mergeMCPServers(fileServers, this.settings.mcp.customMCPs);
+
+          // Initialize the MCP service
+          await this.mcpService.initialize(allServers);
+        } catch (error) {
+          console.error("Failed to initialize MCP:", error);
+          new Notice("Failed to initialize MCP servers. Check console for details.");
+        }
+      } else {
+        // MCP is disabled, shutdown any running servers
+        await this.mcpService.shutdown();
+      }
+    }
   }
 
   async loadSettings(): Promise<void> {

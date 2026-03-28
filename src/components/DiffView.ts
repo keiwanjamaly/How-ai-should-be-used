@@ -1,4 +1,5 @@
 import { FileDiff, DiffChange } from "../services/DiffService";
+import { calculateDiffStats } from "../utils/diffStats";
 
 export interface DiffViewCallbacks {
   onAccept: (content: string) => void;
@@ -183,11 +184,7 @@ export class DiffView {
    * Calculate statistics for the diff
    */
   private calculateStats(): { added: number; removed: number; unchanged: number } {
-    return {
-      added: this.diff.changes.filter((c) => c.type === "added").length,
-      removed: this.diff.changes.filter((c) => c.type === "removed").length,
-      unchanged: this.diff.changes.filter((c) => c.type === "unchanged").length,
-    };
+    return calculateDiffStats(this.diff);
   }
 
   /**
@@ -195,6 +192,30 @@ export class DiffView {
    */
   getContainer(): HTMLElement {
     return this.container;
+  }
+
+  /**
+   * Mark a line as accepted (visual feedback)
+   */
+  markLineAccepted(lineNumber: number, type: "added" | "removed"): void {
+    const selector = `.oa-diff-${type}[data-line="${lineNumber}"]`;
+    const lines = this.container.querySelectorAll(selector);
+    lines.forEach(line => {
+      line.addClass("oa-diff-line-accepted");
+      line.removeClass("oa-diff-line-rejected");
+    });
+  }
+
+  /**
+   * Mark a line as rejected (visual feedback)
+   */
+  markLineRejected(lineNumber: number, type: "added" | "removed"): void {
+    const selector = `.oa-diff-${type}[data-line="${lineNumber}"]`;
+    const lines = this.container.querySelectorAll(selector);
+    lines.forEach(line => {
+      line.addClass("oa-diff-line-rejected");
+      line.removeClass("oa-diff-line-accepted");
+    });
   }
 
   /**
