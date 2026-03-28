@@ -117,6 +117,7 @@ export class ChatView extends ItemView {
 
   async onClose(): Promise<void> {
     this.stopGeneration();
+    this.runMessageCleanups();
     this.containerEl.empty();
   }
 
@@ -191,9 +192,13 @@ export class ChatView extends ItemView {
 
     this.messages = [];
     this.messagesEl.empty();
+    this.runMessageCleanups();
+    this.detectedAIFileChange = null;
+  }
+
+  private runMessageCleanups(): void {
     this.messageCleanupCallbacks.forEach(cleanup => cleanup());
     this.messageCleanupCallbacks = [];
-    this.detectedAIFileChange = null;
   }
 
   private stopGeneration(): void {
