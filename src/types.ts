@@ -17,6 +17,7 @@ export interface OpenRouterSettings {
 export interface ObsidianAIChatSettings {
   openRouter: OpenRouterSettings;
   systemPrompt: string;
+  favoriteModels: string[];
 }
 
 export const DEFAULT_SETTINGS: ObsidianAIChatSettings = {
@@ -25,4 +26,5 @@ export const DEFAULT_SETTINGS: ObsidianAIChatSettings = {
     model: "openai/gpt-4o-mini",
   },
   systemPrompt: "",
+  favoriteModels: ["openai/gpt-4o-mini", "anthropic/claude-3.5-sonnet", "google/gemini-flash-1.5"],
 };

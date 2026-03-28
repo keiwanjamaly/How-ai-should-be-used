@@ -21,6 +21,8 @@ export class ChatView extends ItemView {
   private currentAbortController: AbortController | null = null;
   private busy = false;
   private includeFileContext = true;
+  private selectedModel: string = "";
+  private modelSelectorEl!: HTMLSelectElement;
   private fileChangeParser: FileChangeParser;
   private detectedAIFileChange: DetectedFileChange | null = null;
   private messageCleanupCallbacks: Array<() => void> = [];
@@ -53,13 +55,26 @@ export class ChatView extends ItemView {
     const header = root.createDiv({ cls: "oa-chat-header" });
     header.createEl("h2", { text: "AI Chat" });
 
-    this.clearButtonEl = header.createEl("button", {
+    const headerActions = header.createDiv({ cls: "oa-chat-header-actions" });
+
+    this.selectedModel = this.plugin.settings.openRouter.model;
+
+    this.modelSelectorEl = headerActions.createEl("select", {
+      cls: "oa-chat-model-selector",
+      attr: { title: "Select model", "aria-label": "Select model" },
+    });
+    this.refreshModelSelector();
+    this.modelSelectorEl.addEventListener("change", () => {
+      this.selectedModel = this.modelSelectorEl.value;
+    });
+
+    this.clearButtonEl = headerActions.createEl("button", {
       cls: "mod-cta oa-chat-clear",
       text: "Clear",
     });
     this.clearButtonEl.addEventListener("click", () => this.clearConversation());
 
-    this.contextToggleEl = header.createEl("button", {
+    this.contextToggleEl = headerActions.createEl("button", {
       cls: "oa-chat-context-toggle",
       text: "📎",
       attr: {
@@ -131,6 +146,23 @@ export class ChatView extends ItemView {
     this.contextToggleEl.toggleClass("oa-chat-context-inactive", !this.includeFileContext);
   }
 
+  private refreshModelSelector(): void {
+    const current = this.selectedModel || this.plugin.settings.openRouter.model;
+    this.modelSelectorEl.empty();
+
+    const models = this.plugin.settings.favoriteModels;
+    const allModels = models.includes(current) ? models : [current, ...models];
+
+    for (const model of allModels) {
+      const opt = this.modelSelectorEl.createEl("option", {
+        text: model.split("/").pop() ?? model,
+        attr: { value: model },
+      });
+      if (model === current) opt.selected = true;
+    }
+    this.selectedModel = current;
+  }
+
   private getActiveFile(): TFile | null {
     return this.app.workspace.getActiveFile();
   }
@@ -182,6 +214,7 @@ export class ChatView extends ItemView {
     this.inputEl.disabled = isBusy;
     this.stopButtonEl.toggleClass("oa-hidden", !isBusy);
     this.clearButtonEl.disabled = isBusy;
+    this.modelSelectorEl.disabled = isBusy;
   }
 
   private clearConversation(): void {
@@ -422,7 +455,7 @@ export class ChatView extends ItemView {
       return;
     }
 
-    const strategy = this.plugin.createStrategy();
+    const strategy = this.plugin.createStrategy(this.selectedModel);
     const configError = strategy.validateConfig();
     if (configError) {
       new Notice(configError);

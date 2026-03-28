@@ -1,5 +1,6 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import type ObsidianAIChatPlugin from "./main";
+import { DEFAULT_SETTINGS } from "./types";
 
 export class ObsidianAIChatSettingTab extends PluginSettingTab {
   constructor(app: App, private readonly plugin: ObsidianAIChatPlugin) {
@@ -39,6 +40,26 @@ export class ObsidianAIChatSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           }),
       );
+
+    new Setting(containerEl)
+      .setName("Favourite models")
+      .setDesc("One model slug per line. These appear in the model selector in the chat header.")
+      .addTextArea((text) => {
+        text
+          .setPlaceholder("openai/gpt-4o-mini\nanthropic/claude-3.5-sonnet")
+          .setValue(this.plugin.settings.favoriteModels.join("\n"))
+          .onChange(async (value) => {
+            const models = value
+              .split("\n")
+              .map((s) => s.trim())
+              .filter((s) => s.length > 0);
+            this.plugin.settings.favoriteModels =
+              models.length > 0 ? models : DEFAULT_SETTINGS.favoriteModels;
+            await this.plugin.saveSettings();
+          });
+        text.inputEl.rows = 5;
+        text.inputEl.addClass("oa-settings-textarea");
+      });
 
     new Setting(containerEl)
       .setName("System prompt")

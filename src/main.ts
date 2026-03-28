@@ -3,7 +3,7 @@ import { ObsidianAIChatSettingTab } from "./settings";
 import { OpenRouterStrategy } from "./strategies/OpenRouterStrategy";
 import type { LLMStrategy } from "./strategies/LLMStrategy";
 import { CHAT_VIEW_TYPE, ChatView } from "./views/ChatView";
-import { DEFAULT_SETTINGS, type ObsidianAIChatSettings } from "./types";
+import { DEFAULT_SETTINGS, type ObsidianAIChatSettings, type OpenRouterSettings } from "./types";
 import { FileChangeDetector } from "./services/FileChangeDetector";
 import { DiffService } from "./services/DiffService";
 import { DiffModal, ChangeNotificationModal } from "./components/DiffModal";
@@ -79,8 +79,11 @@ export default class ObsidianAIChatPlugin extends Plugin {
     this.app.workspace.detachLeavesOfType(CHAT_VIEW_TYPE);
   }
 
-  createStrategy(): LLMStrategy {
-    return new OpenRouterStrategy(this.settings.openRouter);
+  createStrategy(modelOverride?: string): LLMStrategy {
+    const config: OpenRouterSettings = modelOverride
+      ? { ...this.settings.openRouter, model: modelOverride }
+      : this.settings.openRouter;
+    return new OpenRouterStrategy(config);
   }
 
   async loadSettings(): Promise<void> {
@@ -93,6 +96,7 @@ export default class ObsidianAIChatPlugin extends Plugin {
         ...DEFAULT_SETTINGS.openRouter,
         ...loaded?.openRouter,
       },
+      favoriteModels: loaded?.favoriteModels ?? DEFAULT_SETTINGS.favoriteModels,
     };
   }
 
