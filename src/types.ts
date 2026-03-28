@@ -17,6 +17,7 @@ export interface OpenRouterSettings {
 export interface ObsidianAIChatSettings {
   openRouter: OpenRouterSettings;
   systemPrompt: string;
+  ocrModel: string;
 }
 
 export const DEFAULT_SETTINGS: ObsidianAIChatSettings = {
@@ -25,4 +26,5 @@ export const DEFAULT_SETTINGS: ObsidianAIChatSettings = {
     model: "openai/gpt-4o-mini",
   },
   systemPrompt: "",
+  ocrModel: "mistral/mistral-ocr-latest",
 };

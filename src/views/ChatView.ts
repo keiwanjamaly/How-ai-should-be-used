@@ -1,4 +1,4 @@
-import { ItemView, Notice, WorkspaceLeaf, TFile } from "obsidian";
+import { ItemView, Notice, WorkspaceLeaf, TFile, setIcon } from "obsidian";
 import type ObsidianAIChatPlugin from "../main";
 import type { LLMStrategy } from "../strategies/LLMStrategy";
 import { ChatRole, type ChatMessage } from "../types";
@@ -18,6 +18,11 @@ export class ChatView extends ItemView {
   private clearButtonEl!: HTMLButtonElement;
   private contextToggleEl!: HTMLButtonElement;
   private contextBadgeEl!: HTMLDivElement;
+  private pdfExtractedText: string | null = null;
+  private pdfFilename: string | null = null;
+  private pdfBadgeEl!: HTMLDivElement;
+  private pdfUploadBtnEl!: HTMLButtonElement;
+  private pdfFileInputEl!: HTMLInputElement;
   private currentAbortController: AbortController | null = null;
   private busy = false;
   private includeFileContext = true;
@@ -73,16 +78,31 @@ export class ChatView extends ItemView {
 
     const composer = root.createDiv({ cls: "oa-chat-composer" });
 
-    this.contextBadgeEl = composer.createDiv({ cls: "oa-chat-context-badge" });
+    const badgesRow = composer.createDiv({ cls: "oa-chat-badges-row" });
+
+    this.contextBadgeEl = badgesRow.createDiv({ cls: "oa-chat-context-badge" });
     this.updateContextBadge();
-    this.inputEl = composer.createEl("textarea", {
-      cls: "oa-chat-input",
-      attr: {
-        placeholder: "Ask something...",
-        rows: "3",
-      },
+
+    this.pdfBadgeEl = badgesRow.createDiv({ cls: "oa-chat-pdf-badge" });
+    this.pdfBadgeEl.hide();
+
+    this.pdfFileInputEl = this.containerEl.createEl("input", {
+      attr: { type: "file", accept: ".pdf", style: "display:none" },
+    });
+    this.pdfFileInputEl.addEventListener("change", () => {
+      const file = this.pdfFileInputEl.files?.[0];
+      if (file) {
+        void this.handlePDFUpload(file);
+        this.pdfFileInputEl.value = ""; // reset so same file can be re-selected
+      }
     });
 
+    const composerInner = composer.createDiv({ cls: "oa-chat-composer-inner" });
+
+    this.inputEl = composerInner.createEl("textarea", {
+      cls: "oa-chat-input",
+      attr: { placeholder: "Ask something...", rows: "3" },
+    });
     this.inputEl.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
@@ -90,20 +110,30 @@ export class ChatView extends ItemView {
       }
     });
 
-    const controls = composer.createDiv({ cls: "oa-chat-controls" });
+    const controls = composerInner.createDiv({ cls: "oa-chat-controls" });
+
+    this.pdfUploadBtnEl = controls.createEl("button", {
+      cls: "oa-chat-pdf-upload",
+      attr: { title: "Upload PDF for context", "aria-label": "Upload PDF" },
+    });
+    setIcon(this.pdfUploadBtnEl, "file-up");
+    this.pdfUploadBtnEl.addEventListener("click", () => {
+      this.pdfFileInputEl.click();
+    });
+
     this.stopButtonEl = controls.createEl("button", {
       cls: "oa-chat-stop",
-      text: "Stop",
+      attr: { title: "Stop generation", "aria-label": "Stop generation" },
     });
+    setIcon(this.stopButtonEl, "square");
     this.stopButtonEl.addEventListener("click", () => this.stopGeneration());
 
     this.sendButtonEl = controls.createEl("button", {
       cls: "mod-cta oa-chat-send",
-      text: "Send",
+      attr: { title: "Send message", "aria-label": "Send message" },
     });
-    this.sendButtonEl.addEventListener("click", () => {
-      void this.handleSend();
-    });
+    setIcon(this.sendButtonEl, "send-horizontal");
+    this.sendButtonEl.addEventListener("click", () => { void this.handleSend(); });
 
     this.updateBusyState(false);
 
@@ -182,6 +212,7 @@ export class ChatView extends ItemView {
     this.inputEl.disabled = isBusy;
     this.stopButtonEl.toggleClass("oa-hidden", !isBusy);
     this.clearButtonEl.disabled = isBusy;
+    this.pdfUploadBtnEl.disabled = isBusy;
   }
 
   private clearConversation(): void {
@@ -364,6 +395,14 @@ export class ChatView extends ItemView {
       requestMessages.push(fileContext);
     }
 
+    // Add PDF context if available
+    if (this.pdfExtractedText && this.pdfFilename) {
+      requestMessages.push({
+        role: ChatRole.System,
+        content: `Extracted PDF content from "${this.pdfFilename}":\n---\n${this.pdfExtractedText}\n---`,
+      });
+    }
+
     // Include all messages with non-empty content
     requestMessages.push(
       ...this.messages.filter((message) => message.content.trim()),
@@ -410,6 +449,104 @@ export class ChatView extends ItemView {
       // After streaming completes, check for file modifications
       await this.detectAndHandleFileChange(assistantContentEl, assistantMessage.content);
     }
+  }
+
+  private async handlePDFUpload(file: File): Promise<void> {
+    if (this.busy) return;
+
+    new Notice(`Extracting text from ${file.name}…`);
+    this.pdfUploadBtnEl.disabled = true;
+
+    try {
+      const text = await this.performOCR(file);
+      this.pdfExtractedText = text;
+      this.pdfFilename = file.name;
+      this.updatePDFBadge();
+      new Notice(`PDF extracted: ${file.name}`);
+    } catch (error) {
+      new Notice(`PDF extraction failed: ${formatErrorMessage(error)}`);
+    } finally {
+      this.pdfUploadBtnEl.disabled = false;
+    }
+  }
+
+  private async performOCR(file: File): Promise<string> {
+    const buffer = await file.arrayBuffer();
+
+    // Chunked base64 encoding to avoid stack overflow on large files
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    const chunkSize = 8192;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+    }
+    const base64 = btoa(binary);
+
+    const apiKey = this.plugin.settings.openRouter.apiKey;
+    if (!apiKey) throw new Error("OpenRouter API key is not set");
+
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: this.plugin.settings.ocrModel,
+        stream: false,
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "document_url",
+                document_url: `data:application/pdf;base64,${base64}`,
+              },
+            ],
+          },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      let msg = `OCR request failed (${response.status})`;
+      try {
+        const json = await response.json() as { error?: { message?: string } };
+        if (json.error?.message) msg = json.error.message;
+      } catch { /* ignore */ }
+      throw new Error(msg);
+    }
+
+    const json = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+    const content = json.choices?.[0]?.message?.content ?? "";
+    if (!content) throw new Error("OCR model returned empty content");
+    return content;
+  }
+
+  private updatePDFBadge(): void {
+    this.pdfBadgeEl.empty();
+
+    if (!this.pdfExtractedText || !this.pdfFilename) {
+      this.pdfBadgeEl.hide();
+      return;
+    }
+
+    const icon = this.pdfBadgeEl.createSpan({ cls: "oa-chat-pdf-badge-icon" });
+    setIcon(icon, "file-text");
+    this.pdfBadgeEl.createSpan({ text: this.pdfFilename });
+
+    const dismissBtn = this.pdfBadgeEl.createEl("button", {
+      cls: "oa-chat-pdf-badge-dismiss",
+      attr: { title: "Remove PDF context", "aria-label": "Remove PDF" },
+    });
+    setIcon(dismissBtn, "x");
+    dismissBtn.addEventListener("click", () => {
+      this.pdfExtractedText = null;
+      this.pdfFilename = null;
+      this.updatePDFBadge();
+    });
+
+    this.pdfBadgeEl.show();
   }
 
   private async handleSend(): Promise<void> {
