@@ -623,6 +623,29 @@
   color: var(--text-normal);
 }
 
+/* ===== Model Selector ===== */
+.oa-chat-model-selector {
+  font-size: 0.75rem;
+  max-width: 140px;
+  height: 28px;
+  background: transparent;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  color: var(--text-muted);
+  padding: 0 4px;
+  cursor: pointer;
+}
+
+.oa-chat-model-selector:hover {
+  border-color: var(--interactive-accent);
+  color: var(--text-normal);
+}
+
+.oa-chat-model-selector:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* ===== Pending Changes Indicator ===== */
 .ribbon-button-container .oa-has-pending-changes {
   position: relative;

@@ -3,7 +3,7 @@ import { ObsidianAIChatSettingTab } from "./settings";
 import { OpenRouterStrategy } from "./strategies/OpenRouterStrategy";
 import type { LLMStrategy } from "./strategies/LLMStrategy";
 import { CHAT_VIEW_TYPE, ChatView } from "./views/ChatView";
-import { DEFAULT_SETTINGS, type ObsidianAIChatSettings } from "./types";
+import { DEFAULT_SETTINGS, type ObsidianAIChatSettings, type OpenRouterSettings } from "./types";
 import { FileChangeDetector } from "./services/FileChangeDetector";
 import { DiffService } from "./services/DiffService";
 import { MCPService } from "./services/MCPService";
@@ -88,12 +88,15 @@ export default class ObsidianAIChatPlugin extends Plugin {
     await this.mcpService?.shutdown();
   }
 
-  createStrategy(): LLMStrategy {
+  createStrategy(modelOverride?: string): LLMStrategy {
     const mcpTools = this.mcpService?.getAvailableTools(this.settings.mcp.enabledTools) ?? [];
     const executeTool = this.mcpService
       ? async (toolName: string, args: unknown) => this.mcpService.executeTool(toolName, args)
       : undefined;
-    return new OpenRouterStrategy(this.settings.openRouter, mcpTools, executeTool);
+    const config: OpenRouterSettings = modelOverride
+      ? { ...this.settings.openRouter, model: modelOverride }
+      : this.settings.openRouter;
+    return new OpenRouterStrategy(config, mcpTools, executeTool);
   }
 
   /**
@@ -141,6 +144,7 @@ export default class ObsidianAIChatPlugin extends Plugin {
       },
       chatSessions: loaded?.chatSessions ?? DEFAULT_SETTINGS.chatSessions,
       activeSessionId: loaded?.activeSessionId ?? DEFAULT_SETTINGS.activeSessionId,
+      favoriteModels: loaded?.favoriteModels ?? DEFAULT_SETTINGS.favoriteModels,
     };
   }
 

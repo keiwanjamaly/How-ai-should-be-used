@@ -37,6 +37,7 @@ export interface ObsidianAIChatSettings {
   mcp: MCPSettings;
   chatSessions: ChatSession[];
   activeSessionId: string | null;
+  favoriteModels: string[];
 }
 
 export const DEFAULT_SETTINGS: ObsidianAIChatSettings = {
@@ -48,4 +49,5 @@ export const DEFAULT_SETTINGS: ObsidianAIChatSettings = {
   mcp: DEFAULT_MCP_SETTINGS,
   chatSessions: [],
   activeSessionId: null,
+  favoriteModels: ["openai/gpt-4o-mini", "anthropic/claude-3.5-sonnet", "google/gemini-flash-1.5"],
 };
