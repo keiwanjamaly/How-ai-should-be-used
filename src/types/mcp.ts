@@ -123,6 +123,7 @@ export function normalizeServerConfig(value: unknown): LocalMCPServer | null {
 		) {
 			return null;
 		}
+		if (raw.type !== undefined && raw.type !== "local") return null;
 		if (raw.enabled !== undefined && typeof raw.enabled !== "boolean") return null;
 		if (raw.environment !== undefined && (typeof raw.environment !== "object" || raw.environment === null)) return null;
 		if (raw.timeout !== undefined && typeof raw.timeout !== "number") return null;
