@@ -19,7 +19,7 @@ export default class ObsidianAIChatPlugin extends Plugin {
 
     // Initialize services
     this.diffService = new DiffService(this.app);
-    this.fileChangeDetector = new FileChangeDetector(this.app);
+    this.fileChangeDetector = new FileChangeDetector(this.app, this.diffService);
     
     // Set up change detection
     this.fileChangeDetector.onChange((pendingDiff) => {
