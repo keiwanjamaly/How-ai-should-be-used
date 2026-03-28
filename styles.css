@@ -605,6 +605,24 @@
   gap: 8px;
 }
 
+/* ===== Session Selector ===== */
+.oa-chat-session-selector {
+  font-size: 0.75rem;
+  max-width: 120px;
+  background: transparent;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  color: var(--text-muted);
+  padding: 2px 4px;
+  cursor: pointer;
+  height: 28px;
+}
+
+.oa-chat-session-selector:hover {
+  border-color: var(--interactive-accent);
+  color: var(--text-normal);
+}
+
 /* ===== Pending Changes Indicator ===== */
 .ribbon-button-container .oa-has-pending-changes {
   position: relative;

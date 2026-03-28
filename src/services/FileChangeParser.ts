@@ -26,7 +26,7 @@ export class FileChangeParser {
     // Matches: Text\n---\ncontent\n---
     const horizontalRulePattern = /(?:Here'?s?\s+(?:the\s+)?updated\s+(?:note|file).*?)?\n---\n([\s\S]*?)\n---\s*(?:\n|$)/i;
     const hrMatch = response.match(horizontalRulePattern);
-    
+
     if (hrMatch) {
       const proposedContent = hrMatch[1].trim();
       if (proposedContent.length > 0) {
@@ -45,7 +45,7 @@ export class FileChangeParser {
     //          ```
     const codeBlockPattern = /```(?:markdown|md)?\s*(\S+\.\w+)?\n([\s\S]*?)```/;
     const codeMatch = response.match(codeBlockPattern);
-    
+
     if (codeMatch) {
       const proposedContent = codeMatch[2].trim();
       if (proposedContent.length > 0) {
@@ -61,7 +61,7 @@ export class FileChangeParser {
     // Pattern 3: "Updated content:" or similar headers followed by content
     const updateHeaderPattern = /(?:updated?\s+(?:content|file|note)|new\s+(?:content|version))[:\s]\n+([\s\S]{50,})/i;
     const updateMatch = response.match(updateHeaderPattern);
-    
+
     if (updateMatch) {
       const proposedContent = updateMatch[1].trim();
       // Only consider substantial content (at least 50 chars to avoid false positives)
@@ -83,15 +83,15 @@ export class FileChangeParser {
    */
   private extractChangeDescription(response: string, contentIndex: number): string {
     const textBefore = response.substring(0, contentIndex).trim();
-    
+
     // Get the last sentence or line before the content
     const sentences = textBefore.split(/[.!?]\s+/);
     const lastSentence = sentences[sentences.length - 1];
-    
+
     if (lastSentence.length > 10) {
       return lastSentence.trim();
     }
-    
+
     return "AI proposed changes";
   }
 

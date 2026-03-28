@@ -1,5 +1,6 @@
 import type { ChatMessage, OpenRouterSettings } from "../types";
 import type { LLMStrategy } from "./LLMStrategy";
+import type { MCPTool } from "../types/mcp";
 import { parseSSEStream, parseOpenAIStreamChunk } from "../utils/sseParser";
 
 interface OpenRouterErrorResponse {
@@ -18,7 +19,11 @@ export class OpenRouterStrategy implements LLMStrategy {
 
   private readonly endpoint = "https://openrouter.ai/api/v1/chat/completions";
 
-  constructor(private readonly config: OpenRouterSettings) {}
+  constructor(
+    private readonly config: OpenRouterSettings,
+    private readonly mcpTools: MCPTool[] = [],
+    private readonly executeTool?: (name: string, args: unknown) => Promise<unknown>,
+  ) {}
 
   validateConfig(): string | null {
     if (!this.config.apiKey.trim()) {
