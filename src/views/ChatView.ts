@@ -588,7 +588,7 @@ export class ChatView extends ItemView {
     }
 
     requestMessages.push(
-      ...this.messages.filter((message) => message.content.trim()),
+      ...this.messages.filter((message) => message.content?.trim()),
     );
 
     return requestMessages;
@@ -644,7 +644,13 @@ export class ChatView extends ItemView {
     this.messages.push(userMessage);
     this.appendMessage(userMessage);
 
-    const requestMessages = await this.buildRequestMessages();
+    let requestMessages: ChatMessage[];
+    try {
+      requestMessages = await this.buildRequestMessages();
+    } catch (error) {
+      new Notice(`Failed to build request: ${formatErrorMessage(error)}`);
+      return;
+    }
 
     const assistantMessage: ChatMessage = { role: ChatRole.Assistant, content: "" };
     this.messages.push(assistantMessage);
