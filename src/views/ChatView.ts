@@ -3,8 +3,9 @@ import type ObsidianAIChatPlugin from "../main";
 import type { LLMStrategy } from "../strategies/LLMStrategy";
 import { ChatRole, type ChatMessage } from "../types";
 import { FileChangeParser, type DetectedFileChange } from "../services/FileChangeParser";
-import { DiffService, type FileDiff } from "../services/DiffService";
+import type { FileDiff } from "../services/DiffService";
 import { DiffModal } from "../components/DiffModal";
+import { handleDiffResult } from "../utils/diffResultHandler";
 import { formatErrorMessage } from "../utils/errorUtils";
 
 export const CHAT_VIEW_TYPE = "obsidian-ai-chat-view";
@@ -294,8 +295,8 @@ export class ChatView extends ItemView {
    * Show diff modal for AI-proposed changes
    */
   private async showDiffForChanges(change: DetectedFileChange): Promise<void> {
-    const diffService = new DiffService(this.app);
-    
+    const { diffService } = this.plugin;
+
     // Create the diff
     const fileDiff: FileDiff = diffService.createFileDiff(
       change.file.path,
@@ -316,31 +317,18 @@ export class ChatView extends ItemView {
       timestamp: Date.now(),
     };
 
+    const clearState = () => {
+      this.detectedAIFileChange = null;
+    };
+
     new DiffModal(this.app, pendingDiff, async (result) => {
-      if (result.action === "accept" && result.content) {
-        try {
-          this.plugin.markAsSelfModified(change.file.path);
-          await diffService.acceptChanges(change.file, result.content);
-          new Notice("Changes applied successfully");
-          this.detectedAIFileChange = null;
-        } catch (error) {
-          new Notice(`Failed to apply changes: ${formatErrorMessage(error)}`);
-        }
-      } else if (result.action === "cherry-pick" && result.content) {
-        try {
-          this.plugin.markAsSelfModified(change.file.path);
-          await diffService.acceptChanges(change.file, result.content);
-          const accepted = result.acceptedLines?.size || 0;
-          const rejected = result.rejectedLines?.size || 0;
-          new Notice(`Applied ${accepted} changes, rejected ${rejected}`);
-          this.detectedAIFileChange = null;
-        } catch (error) {
-          new Notice(`Failed to apply selected changes: ${formatErrorMessage(error)}`);
-        }
-      } else if (result.action === "reject") {
-        new Notice("Changes rejected");
-        this.detectedAIFileChange = null;
-      }
+      await handleDiffResult(
+        result,
+        change.file,
+        diffService,
+        (path) => this.plugin.markAsSelfModified(path),
+        { onApplied: clearState, onRejected: clearState },
+      );
     }).open();
   }
 
