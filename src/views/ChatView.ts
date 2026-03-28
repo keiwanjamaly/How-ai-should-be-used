@@ -1,4 +1,4 @@
-import { ItemView, Notice, WorkspaceLeaf, TFile } from "obsidian";
+import { ItemView, Notice, WorkspaceLeaf, TFile, setIcon } from "obsidian";
 import type ObsidianAIChatPlugin from "../main";
 import type { LLMStrategy } from "../strategies/LLMStrategy";
 import { ChatRole, type ChatMessage } from "../types";
@@ -51,22 +51,32 @@ export class ChatView extends ItemView {
     const root = this.containerEl.createDiv({ cls: "oa-chat-root" });
 
     const header = root.createDiv({ cls: "oa-chat-header" });
-    header.createEl("h2", { text: "AI Chat" });
+    const titleEl = header.createDiv({ cls: "oa-chat-header-title" });
+    const titleIcon = titleEl.createSpan();
+    setIcon(titleIcon, "sparkles");
+    titleEl.createSpan({ text: "AI Chat" });
 
-    this.clearButtonEl = header.createEl("button", {
-      cls: "mod-cta oa-chat-clear",
-      text: "Clear",
-    });
-    this.clearButtonEl.addEventListener("click", () => this.clearConversation());
+    const headerActions = header.createDiv({ cls: "oa-chat-header-actions" });
 
-    this.contextToggleEl = header.createEl("button", {
+    this.contextToggleEl = headerActions.createEl("button", {
       cls: "oa-chat-context-toggle",
-      text: "📎",
       attr: {
         title: "Toggle file context inclusion",
+        "aria-label": "Toggle file context",
       },
     });
+    setIcon(this.contextToggleEl, "paperclip");
     this.contextToggleEl.addEventListener("click", () => this.toggleFileContext());
+
+    this.clearButtonEl = headerActions.createEl("button", {
+      cls: "oa-chat-clear",
+      attr: {
+        title: "Clear conversation",
+        "aria-label": "Clear conversation",
+      },
+    });
+    setIcon(this.clearButtonEl, "trash-2");
+    this.clearButtonEl.addEventListener("click", () => this.clearConversation());
     this.updateContextToggleState();
 
     this.messagesEl = root.createDiv({ cls: "oa-chat-messages" });
@@ -75,7 +85,10 @@ export class ChatView extends ItemView {
 
     this.contextBadgeEl = composer.createDiv({ cls: "oa-chat-context-badge" });
     this.updateContextBadge();
-    this.inputEl = composer.createEl("textarea", {
+
+    const composerInner = composer.createDiv({ cls: "oa-chat-composer-inner" });
+
+    this.inputEl = composerInner.createEl("textarea", {
       cls: "oa-chat-input",
       attr: {
         placeholder: "Ask something...",
@@ -90,17 +103,19 @@ export class ChatView extends ItemView {
       }
     });
 
-    const controls = composer.createDiv({ cls: "oa-chat-controls" });
+    const controls = composerInner.createDiv({ cls: "oa-chat-controls" });
     this.stopButtonEl = controls.createEl("button", {
       cls: "oa-chat-stop",
-      text: "Stop",
+      attr: { title: "Stop generation", "aria-label": "Stop generation" },
     });
+    setIcon(this.stopButtonEl, "square");
     this.stopButtonEl.addEventListener("click", () => this.stopGeneration());
 
     this.sendButtonEl = controls.createEl("button", {
       cls: "mod-cta oa-chat-send",
-      text: "Send",
+      attr: { title: "Send message", "aria-label": "Send message" },
     });
+    setIcon(this.sendButtonEl, "send-horizontal");
     this.sendButtonEl.addEventListener("click", () => {
       void this.handleSend();
     });
@@ -144,10 +159,13 @@ export class ChatView extends ItemView {
 
     const file = this.getActiveFile();
     if (file) {
-      this.contextBadgeEl.setText(`📎 ${file.name}`);
+      this.contextBadgeEl.empty();
+      const badgeIcon = this.contextBadgeEl.createSpan({ cls: "oa-chat-context-badge-icon" });
+      setIcon(badgeIcon, "paperclip");
+      this.contextBadgeEl.createSpan({ text: file.name });
       this.contextBadgeEl.show();
     } else {
-      this.contextBadgeEl.setText("");
+      this.contextBadgeEl.empty();
       this.contextBadgeEl.hide();
     }
   }
@@ -223,13 +241,13 @@ export class ChatView extends ItemView {
           title: "Copy message",
         },
       });
-      copyBtn.innerHTML = "📋";
-      
+      setIcon(copyBtn, "copy");
+
       const clickHandler = () => {
         navigator.clipboard.writeText(message.content).then(() => {
-          copyBtn.innerHTML = "✅";
+          setIcon(copyBtn, "check");
           setTimeout(() => {
-            copyBtn.innerHTML = "📋";
+            setIcon(copyBtn, "copy");
           }, 2000);
         });
       };
@@ -274,11 +292,13 @@ export class ChatView extends ItemView {
       
       const applyBtn = actionsEl.createEl("button", {
         cls: "mod-cta oa-chat-apply-btn",
-        text: "📝 Review & Apply Changes",
         attr: {
           title: "Review changes in diff view and apply selectively",
         },
       });
+      const applyIcon = applyBtn.createSpan({ cls: "oa-chat-apply-btn-icon" });
+      setIcon(applyIcon, "file-diff");
+      applyBtn.createSpan({ text: "Review & Apply Changes" });
       
       applyBtn.addEventListener("click", () => {
         void this.showDiffForChanges(detectedChange);
