@@ -26,6 +26,7 @@ export class ChatView extends ItemView {
   private includeFileContext = true;
   private fileChangeParser: FileChangeParser;
   private detectedAIFileChange: DetectedFileChange | null = null;
+  private messageWrappers = new Map<ChatMessage, HTMLDivElement>();
   private messageCleanupMap = new Map<ChatMessage, () => void>();
 
   constructor(
@@ -215,11 +216,15 @@ export class ChatView extends ItemView {
     this.inputEl.disabled = isBusy;
     this.stopButtonEl.toggleClass("oa-hidden", !isBusy);
     this.newChatButtonEl.disabled = isBusy;
+    this.messagesEl.querySelectorAll<HTMLButtonElement>(".oa-chat-edit-btn").forEach(btn => {
+      btn.disabled = isBusy;
+    });
   }
 
   private runMessageCleanups(): void {
     this.messageCleanupMap.forEach((cleanup) => cleanup());
     this.messageCleanupMap.clear();
+    this.messageWrappers.clear();
   }
 
   private generateSessionTitle(messages: ChatMessage[]): string {
@@ -363,6 +368,8 @@ export class ChatView extends ItemView {
     wrapper.toggleClass("oa-chat-assistant", message.role === ChatRole.Assistant);
     wrapper.toggleClass("oa-chat-system", message.role === ChatRole.System);
 
+    this.messageWrappers.set(message, wrapper);
+
     const content = wrapper.createDiv({
       cls: "oa-chat-message-content",
     });
@@ -392,6 +399,23 @@ export class ChatView extends ItemView {
       this.messageCleanupMap.set(message, () => {
         copyBtn.removeEventListener("click", clickHandler);
       });
+
+      if (message.role === ChatRole.User) {
+        const editBtn = toolbar.createEl("button", {
+          cls: "oa-chat-edit-btn",
+          attr: { title: "Edit message", "aria-label": "Edit message" },
+        });
+        setIcon(editBtn, "pencil");
+        const editHandler = () => {
+          if (!this.busy) this.enterEditMode(wrapper, content, message);
+        };
+        editBtn.addEventListener("click", editHandler);
+        const existingCleanup = this.messageCleanupMap.get(message);
+        this.messageCleanupMap.set(message, () => {
+          existingCleanup?.();
+          editBtn.removeEventListener("click", editHandler);
+        });
+      }
     }
 
     this.messagesEl.scrollTo({ top: this.messagesEl.scrollHeight });
@@ -545,6 +569,27 @@ export class ChatView extends ItemView {
     }
   }
 
+  private async sendUserMessage(userMessage: ChatMessage): Promise<void> {
+    const strategy = this.plugin.createStrategy();
+    const configError = strategy.validateConfig();
+    if (configError) {
+      new Notice(configError);
+      return;
+    }
+
+    this.messages.push(userMessage);
+    this.appendMessage(userMessage);
+
+    const requestMessages = await this.buildRequestMessages();
+
+    const assistantMessage: ChatMessage = { role: ChatRole.Assistant, content: "" };
+    this.messages.push(assistantMessage);
+    const assistantContentEl = this.appendMessage(assistantMessage);
+
+    this.updateBusyState(true);
+    await this.streamResponse(strategy, requestMessages, assistantMessage, assistantContentEl);
+  }
+
   private async handleSend(): Promise<void> {
     if (this.busy) {
       return;
@@ -555,34 +600,95 @@ export class ChatView extends ItemView {
       return;
     }
 
-    const strategy = this.plugin.createStrategy();
-    const configError = strategy.validateConfig();
-    if (configError) {
-      new Notice(configError);
-      return;
+    this.inputEl.value = "";
+    const userMessage: ChatMessage = { role: ChatRole.User, content: text };
+    await this.sendUserMessage(userMessage);
+  }
+
+  private enterEditMode(
+    wrapper: HTMLDivElement,
+    contentEl: HTMLDivElement,
+    message: ChatMessage,
+  ): void {
+    contentEl.hide();
+
+    const editArea = wrapper.createDiv({ cls: "oa-chat-edit-area" });
+
+    const textarea = editArea.createEl("textarea", {
+      cls: "oa-chat-edit-textarea",
+      attr: { rows: "3" },
+    });
+    textarea.value = message.content;
+    textarea.focus();
+
+    const actions = editArea.createDiv({ cls: "oa-chat-edit-actions" });
+
+    const sendBtn = actions.createEl("button", {
+      cls: "mod-cta oa-chat-edit-send",
+      attr: { title: "Confirm edit and resend" },
+    });
+    setIcon(sendBtn, "send-horizontal");
+
+    const cancelBtn = actions.createEl("button", {
+      cls: "oa-chat-edit-cancel",
+      attr: { title: "Cancel edit" },
+    });
+    setIcon(cancelBtn, "x");
+
+    sendBtn.addEventListener("click", () => {
+      void this.confirmEdit(wrapper, message, textarea.value.trim(), editArea);
+    });
+
+    cancelBtn.addEventListener("click", () => {
+      this.cancelEdit(contentEl, editArea);
+    });
+
+    textarea.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        void this.confirmEdit(wrapper, message, textarea.value.trim(), editArea);
+      }
+      if (e.key === "Escape") {
+        this.cancelEdit(contentEl, editArea);
+      }
+    });
+  }
+
+  private cancelEdit(
+    contentEl: HTMLDivElement,
+    editArea: HTMLDivElement,
+  ): void {
+    editArea.remove();
+    contentEl.show();
+  }
+
+  private async confirmEdit(
+    wrapper: HTMLDivElement,
+    message: ChatMessage,
+    newText: string,
+    editArea: HTMLDivElement,
+  ): Promise<void> {
+    if (!newText || this.busy) return;
+
+    const idx = this.messages.indexOf(message);
+    if (idx === -1) return;
+
+    const removedMessages = this.messages.splice(idx);
+
+    for (const removed of removedMessages) {
+      const el = this.messageWrappers.get(removed);
+      if (el) {
+        this.messageCleanupMap.get(removed)?.();
+        this.messageCleanupMap.delete(removed);
+        this.messageWrappers.delete(removed);
+        el.remove();
+      }
     }
 
-    this.inputEl.value = "";
+    // editArea is a child of wrapper, already removed above; this is a safety net
+    editArea.remove();
 
-    const userMessage: ChatMessage = { role: ChatRole.User, content: text };
-    this.messages.push(userMessage);
-    this.appendMessage(userMessage);
-
-    const requestMessages = await this.buildRequestMessages();
-
-    const assistantMessage: ChatMessage = {
-      role: ChatRole.Assistant,
-      content: "",
-    };
-    this.messages.push(assistantMessage);
-    const assistantContentEl = this.appendMessage(assistantMessage);
-
-    this.updateBusyState(true);
-    await this.streamResponse(
-      strategy,
-      requestMessages,
-      assistantMessage,
-      assistantContentEl,
-    );
+    const updatedMessage: ChatMessage = { role: ChatRole.User, content: newText };
+    await this.sendUserMessage(updatedMessage);
   }
 }
