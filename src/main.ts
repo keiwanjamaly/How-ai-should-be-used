@@ -8,6 +8,7 @@ import { FileChangeDetector } from "./services/FileChangeDetector";
 import { DiffService } from "./services/DiffService";
 import { MCPService } from "./services/MCPService";
 import { DiffModal, ChangeNotificationModal } from "./components/DiffModal";
+import { handleDiffResult } from "./utils/diffResultHandler";
 import { formatErrorMessage } from "./utils/errorUtils";
 import { mergeMCPServers } from "./types/mcp";
 
@@ -192,35 +193,26 @@ export default class ObsidianAIChatPlugin extends Plugin {
     }
 
     new DiffModal(this.app, pendingDiff, async (result) => {
-      if (result.action === "accept" && result.content) {
-        try {
-          this.markAsSelfModified(file.path);
-          await this.diffService.acceptChanges(file, result.content);
-          this.fileChangeDetector.removePendingDiff(file.path);
-          new Notice("Changes accepted");
-        } catch (error) {
-          new Notice(`Failed to accept changes: ${formatErrorMessage(error)}`);
-        }
-      } else if (result.action === "cherry-pick" && result.content) {
-        try {
-          this.markAsSelfModified(file.path);
-          await this.diffService.acceptChanges(file, result.content);
-          this.fileChangeDetector.removePendingDiff(file.path);
-          const accepted = result.acceptedLines?.size || 0;
-          const rejected = result.rejectedLines?.size || 0;
-          new Notice(`Applied ${accepted} changes, rejected ${rejected}`);
-        } catch (error) {
-          new Notice(`Failed to apply selected changes: ${formatErrorMessage(error)}`);
-        }
-      } else if (result.action === "reject") {
-        try {
-          await this.diffService.rejectChanges(file, pendingDiff.diff.oldContent);
-          this.fileChangeDetector.removePendingDiff(file.path);
-          new Notice("Changes rejected - file restored to original");
-        } catch (error) {
-          new Notice(`Failed to reject changes: ${formatErrorMessage(error)}`);
-        }
-      }
+      await handleDiffResult(
+        result,
+        file,
+        this.diffService,
+        (path) => this.markAsSelfModified(path),
+        {
+          onApplied: () => {
+            this.fileChangeDetector.removePendingDiff(file.path);
+          },
+          onRejected: async () => {
+            try {
+              await this.diffService.rejectChanges(file, pendingDiff.diff.oldContent);
+              this.fileChangeDetector.removePendingDiff(file.path);
+              new Notice("Changes rejected - file restored to original");
+            } catch (error) {
+              new Notice(`Failed to reject changes: ${formatErrorMessage(error)}`);
+            }
+          },
+        },
+      );
     }).open();
   }
 
