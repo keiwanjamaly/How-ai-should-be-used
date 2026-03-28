@@ -1,6 +1,7 @@
 import type { ChatMessage, OpenRouterSettings } from "../types";
 import type { LLMStrategy } from "./LLMStrategy";
-import { parseSSEStream, parseOpenAIStreamChunk } from "../utils/sseParser";
+import type { MCPTool } from "../types/mcp";
+import { parseSSEStream } from "../utils/sseParser";
 
 interface OpenRouterErrorResponse {
   choices?: Array<{
@@ -18,7 +19,11 @@ export class OpenRouterStrategy implements LLMStrategy {
 
   private readonly endpoint = "https://openrouter.ai/api/v1/chat/completions";
 
-  constructor(private readonly config: OpenRouterSettings) {}
+  constructor(
+    private readonly config: OpenRouterSettings,
+    private readonly mcpTools: MCPTool[] = [],
+    private readonly executeTool?: (toolName: string, args: unknown) => Promise<unknown>,
+  ) {}
 
   validateConfig(): string | null {
     if (!this.config.apiKey.trim()) {
@@ -102,13 +107,24 @@ export class OpenRouterStrategy implements LLMStrategy {
       reader,
       decoder,
       (payload) => {
-        const { content, error } = parseOpenAIStreamChunk(payload);
-        if (error) {
-          throw new Error(error);
-        }
-        if (content) {
-          complete += content;
-          onChunk(content);
+        try {
+          const parsed = JSON.parse(payload) as {
+            choices?: Array<{ delta?: { content?: string } }>;
+            error?: { message?: string };
+          };
+          if (parsed.error?.message) {
+            throw new Error(parsed.error.message);
+          }
+          const content = parsed.choices?.[0]?.delta?.content;
+          if (content) {
+            complete += content;
+            onChunk(content);
+          }
+        } catch (e) {
+          if (e instanceof Error && e.message !== "Unexpected end of JSON input") {
+            throw e;
+          }
+          // Invalid JSON — skip this chunk
         }
       },
       signal,

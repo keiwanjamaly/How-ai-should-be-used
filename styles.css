@@ -799,3 +799,84 @@
 .oa-server-section .setting-item-description {
   font-size: 0.8rem;
 }
+
+/* ===== Edit Message ===== */
+.oa-chat-edit-btn {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-s);
+  color: var(--text-faint);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.oa-chat-message:hover .oa-chat-edit-btn,
+.oa-chat-edit-btn:focus {
+  opacity: 1;
+}
+
+.oa-chat-edit-btn:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.oa-chat-edit-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.oa-chat-edit-area {
+  width: 100%;
+  margin-top: 4px;
+}
+
+.oa-chat-edit-textarea {
+  width: 100%;
+  resize: vertical;
+  border-radius: var(--radius-m);
+  padding: 8px 10px;
+  font-size: 0.9rem;
+  background: var(--background-primary);
+  border: 1px solid var(--interactive-accent);
+  color: var(--text-normal);
+  line-height: 1.5;
+  box-sizing: border-box;
+}
+
+.oa-chat-edit-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+  justify-content: flex-end;
+}
+
+.oa-chat-edit-send,
+.oa-chat-edit-cancel {
+  height: 28px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  font-size: 0.8rem;
+  gap: 4px;
+}
+
+.oa-chat-edit-cancel {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.oa-chat-edit-cancel:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
