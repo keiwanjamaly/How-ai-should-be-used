@@ -38,6 +38,13 @@ export class FileChangeDetector extends Component {
   }
 
   /**
+   * Get the current enabled state of change detection
+   */
+  getEnabled(): boolean {
+    return this.isEnabled;
+  }
+
+  /**
    * Initialize the detector and start listening for changes
    */
   initialize(): void {

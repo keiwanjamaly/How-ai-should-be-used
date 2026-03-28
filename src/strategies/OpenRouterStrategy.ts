@@ -43,11 +43,7 @@ export class OpenRouterStrategy implements LLMStrategy {
         Authorization: `Bearer ${this.config.apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        model: this.config.model,
-        messages,
-        stream: true,
-      }),
+      body: JSON.stringify(this.buildRequestBody(messages)),
       signal,
     });
 
@@ -67,16 +63,38 @@ export class OpenRouterStrategy implements LLMStrategy {
     }
 
     if (!response.body) {
-      // Fallback for non-streaming response
-      const json = (await response.json()) as OpenRouterErrorResponse;
-      const content = json.choices?.[0]?.message?.content ?? "";
-      if (content) {
-        onChunk(content);
-      }
-      return content;
+      return this.handleNonStreamingResponse(response, onChunk);
     }
 
-    const reader = response.body.getReader();
+    return this.handleStreamingResponse(response, onChunk, signal);
+  }
+
+  private buildRequestBody(messages: ChatMessage[]): Record<string, unknown> {
+    return {
+      model: this.config.model,
+      messages,
+      stream: true,
+    };
+  }
+
+  private async handleNonStreamingResponse(
+    response: Response,
+    onChunk: (chunk: string) => void,
+  ): Promise<string> {
+    const json = (await response.json()) as OpenRouterErrorResponse;
+    const content = json.choices?.[0]?.message?.content ?? "";
+    if (content) {
+      onChunk(content);
+    }
+    return content;
+  }
+
+  private async handleStreamingResponse(
+    response: Response,
+    onChunk: (chunk: string) => void,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const reader = response.body!.getReader();
     const decoder = new TextDecoder();
     let complete = "";
 
