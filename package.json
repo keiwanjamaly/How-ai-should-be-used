@@ -1,20 +1,21 @@
 {
   "name": "obsidian-ai-chat",
-  "version": "1.0.0",
-  "description": "Obsidian plugin for chatting with LLMs",
+  "version": "0.1.0",
+  "description": "Chat with LLMs from a sidebar panel in Obsidian using OpenRouter.",
   "main": "main.js",
   "scripts": {
     "build": "node esbuild.config.mjs production",
     "dev": "node esbuild.config.mjs",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/DiffService.test.ts && npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/mcp.test.ts && npx ts-node src/__tests__/FileChangeParser.test.ts",
+    "release:prepare": "node scripts/prepare-release.mjs",
     "deploy": "npm run build && mkdir -p \"${OBSIDIAN_PLUGIN_PATH:?Set OBSIDIAN_PLUGIN_PATH}\" && cp main.js manifest.json styles.css \"$OBSIDIAN_PLUGIN_PATH\""
   },
   "keywords": [
     "obsidian",
     "plugin"
   ],
-  "author": "",
+  "author": "Keiwan Jamaly",
   "license": "MIT",
   "devDependencies": {
     "@types/diff": "^7.0.2",

@@ -1,11 +1,10 @@
 {
 	"id": "obsidian-ai-chat",
 	"name": "Obsidian AI Chat",
-	"version": "1.0.0",
-	"minAppVersion": "0.15.0",
-	"description": "Chat with LLMs from a sidebar panel in Obsidian",
-	"author": "Your Name",
-	"fundingUrl": "",
-	"isDesktopOnly": false,
+	"version": "0.1.0",
+	"minAppVersion": "1.6.0",
+	"description": "Chat with LLMs from a sidebar panel in Obsidian using OpenRouter.",
+	"author": "Keiwan Jamaly",
+	"isDesktopOnly": true,
 	"main": "main.js"
 }
