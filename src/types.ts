@@ -24,10 +24,21 @@ export interface OpenRouterSettings {
   model: string;
 }
 
+export interface ChatSession {
+  id: string;
+  title: string;
+  messages: ChatMessage[];
+  createdAt: number;
+}
+
 export interface ObsidianAIChatSettings {
   openRouter: OpenRouterSettings;
   systemPrompt: string;
   mcp: MCPSettings;
+  chatSessions: ChatSession[];
+  activeSessionId: string | null;
+  favoriteModels: string[];
+  ocrModel: string;
 }
 
 export const DEFAULT_SETTINGS: ObsidianAIChatSettings = {
@@ -37,4 +48,8 @@ export const DEFAULT_SETTINGS: ObsidianAIChatSettings = {
   },
   systemPrompt: "",
   mcp: DEFAULT_MCP_SETTINGS,
+  chatSessions: [],
+  activeSessionId: null,
+  favoriteModels: ["openai/gpt-4o-mini", "anthropic/claude-3.5-sonnet", "google/gemini-flash-1.5"],
+  ocrModel: "mistral/mistral-ocr-latest",
 };

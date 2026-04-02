@@ -1,33 +1,38 @@
-import { ChatRole, type ChatMessage, type OpenRouterSettings } from "../types";
-import type { LLMStrategy, ToolCall } from "./LLMStrategy";
+import type { ChatMessage, OpenRouterSettings } from "../types";
+import { ChatRole } from "../types";
+import type { LLMStrategy } from "./LLMStrategy";
+import type { MCPTool } from "../types/mcp";
 import { parseSSEStream } from "../utils/sseParser";
-import type { MCPTool, MCPToolResult } from "../types/mcp";
 
 interface OpenRouterErrorResponse {
   choices?: Array<{
     message?: {
-      content?: string;
-      tool_calls?: RawToolCall[];
+      content?: string | null;
+      tool_calls?: Array<{
+        id?: string;
+        type?: "function";
+        function?: {
+          name?: string;
+          arguments?: string;
+        };
+      }>;
     };
-    finish_reason?: string;
   }>;
   error?: {
     message?: string;
   };
 }
 
-interface OpenRouterFunction {
+interface OpenRouterToolDefinition {
   type: "function";
   function: {
     name: string;
     description?: string;
-    parameters?: unknown;
+    parameters: Record<string, unknown>;
   };
 }
 
-/** Raw streaming tool call delta as sent by OpenRouter/OpenAI */
-interface RawToolCall {
-  index?: number;
+interface OpenRouterToolCall {
   id?: string;
   type?: "function";
   function?: {
@@ -35,6 +40,8 @@ interface RawToolCall {
     arguments?: string;
   };
 }
+
+const MAX_TOOL_ROUNDS = 8;
 
 export class OpenRouterStrategy implements LLMStrategy {
   public readonly name = "OpenRouter";
@@ -44,7 +51,7 @@ export class OpenRouterStrategy implements LLMStrategy {
   constructor(
     private readonly config: OpenRouterSettings,
     private readonly mcpTools: MCPTool[] = [],
-    private readonly executeTool?: (toolName: string, args: unknown) => Promise<MCPToolResult>,
+    private readonly executeTool?: (toolName: string, args: unknown) => Promise<unknown>,
   ) {}
 
   validateConfig(): string | null {
@@ -59,51 +66,125 @@ export class OpenRouterStrategy implements LLMStrategy {
     return null;
   }
 
-  /**
-   * Convert MCP tools to OpenRouter function format
-   */
-  private getTools(): OpenRouterFunction[] | undefined {
-    if (this.mcpTools.length === 0) {
-      return undefined;
-    }
-
-    return this.mcpTools.map((tool) => ({
-      type: "function" as const,
-      function: {
-        name: tool.name,
-        description: tool.description || `Execute ${tool.name}`,
-        parameters: tool.inputSchema || { type: "object", properties: {} },
-      },
-    }));
-  }
-
   async sendMessage(
     messages: ChatMessage[],
     onChunk: (chunk: string) => void,
     signal?: AbortSignal,
   ): Promise<string> {
-    const tools = this.getTools();
-    const maxToolCalls = 10; // Prevent infinite loops
-    let toolCallCount = 0;
-    let finalContent = "";
+    if (this.mcpTools.length > 0 && this.executeTool) {
+      return this.sendMessageWithTools(messages, onChunk, signal);
+    }
 
-    // Make a copy of messages that we can modify
-    let currentMessages = [...messages];
+    const response = await fetch(this.endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.config.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(this.buildRequestBody(messages)),
+      signal,
+    });
 
-    while (toolCallCount < maxToolCalls) {
+    if (!response.ok) {
+      let message = `OpenRouter request failed (${response.status})`;
+
+      try {
+        const errorJson = (await response.json()) as OpenRouterErrorResponse;
+        if (errorJson.error?.message) {
+          message = errorJson.error.message;
+        }
+      } catch {
+        // Ignore JSON parse errors and keep generic HTTP error message.
+      }
+
+      throw new Error(message);
+    }
+
+    if (!response.body) {
+      return this.handleNonStreamingResponse(response, onChunk);
+    }
+
+    return this.handleStreamingResponse(response, onChunk, signal);
+  }
+
+  private buildRequestBody(messages: ChatMessage[]): Record<string, unknown> {
+    const body: Record<string, unknown> = {
+      model: this.config.model,
+      messages: this.serializeMessages(messages),
+      stream: true,
+    };
+
+    const tools = this.buildToolDefinitions();
+    if (tools.length > 0) {
+      body.tools = tools;
+    }
+
+    return body;
+  }
+
+  private buildNonStreamingRequestBody(messages: ChatMessage[]): Record<string, unknown> {
+    return {
+      ...this.buildRequestBody(messages),
+      stream: false,
+    };
+  }
+
+  private serializeMessages(messages: ChatMessage[]): Array<Record<string, unknown>> {
+    return messages.map((message) => {
+      const serialized: Record<string, unknown> = {
+        role: message.role,
+        content: message.content,
+      };
+
+      if (message.tool_calls?.length) {
+        serialized.tool_calls = message.tool_calls;
+      }
+
+      if (message.tool_call_id) {
+        serialized.tool_call_id = message.tool_call_id;
+      }
+
+      return serialized;
+    });
+  }
+
+  private buildToolDefinitions(): OpenRouterToolDefinition[] {
+    return this.mcpTools.map((tool) => ({
+      type: "function",
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: this.normalizeInputSchema(tool.inputSchema),
+      },
+    }));
+  }
+
+  private normalizeInputSchema(inputSchema: unknown): Record<string, unknown> {
+    if (typeof inputSchema === "object" && inputSchema !== null && !Array.isArray(inputSchema)) {
+      return inputSchema as Record<string, unknown>;
+    }
+
+    return {
+      type: "object",
+      properties: {},
+    };
+  }
+
+  private async sendMessageWithTools(
+    messages: ChatMessage[],
+    onChunk: (chunk: string) => void,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const conversation = [...messages];
+
+    for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
       const response = await fetch(this.endpoint, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${this.config.apiKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          model: this.config.model,
-          messages: currentMessages,
-          stream: true,
-          tools,
-          tool_choice: tools ? "auto" : undefined,
-        }),
+        body: JSON.stringify(this.buildNonStreamingRequestBody(conversation)),
         signal,
       });
 
@@ -122,207 +203,148 @@ export class OpenRouterStrategy implements LLMStrategy {
         throw new Error(message);
       }
 
-      if (!response.body) {
-        // Fallback for non-streaming response
-        const json = (await response.json()) as OpenRouterErrorResponse;
-        const content = json.choices?.[0]?.message?.content ?? "";
-        const rawToolCalls = json.choices?.[0]?.message?.tool_calls;
+      const json = (await response.json()) as OpenRouterErrorResponse;
+      const assistantMessage = json.choices?.[0]?.message;
+      const content = assistantMessage?.content ?? "";
+      const toolCalls = this.extractToolCalls(assistantMessage?.tool_calls);
 
-        if (rawToolCalls && rawToolCalls.length > 0 && this.executeTool) {
-          const assembled = this.assembleToolCalls(rawToolCalls);
-          if (assembled.length > 0) {
-            currentMessages = await this.handleToolCalls(currentMessages, assembled);
-            toolCallCount += assembled.length;
-            continue;
-          }
-        }
-
+      if (toolCalls.length === 0) {
         if (content) {
           onChunk(content);
-          finalContent = content;
         }
-        break;
+        return content;
       }
 
-      // Handle streaming response.
-      // Tool call arguments arrive as partial string deltas spread across many
-      // SSE chunks. We accumulate them by index, then assemble + parse once the
-      // stream is done.
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let completeContent = "";
+      conversation.push({
+        role: ChatRole.Assistant,
+        content,
+        tool_calls: toolCalls,
+      });
 
-      // Accumulator: index → partial raw tool call
-      const rawAccumulator: Record<number, {
-        id: string;
-        type: "function";
-        name: string;
-        argumentsStr: string;
-      }> = {};
+      for (const toolCall of toolCalls) {
+        const toolResult = await this.executeSingleToolCall(toolCall);
+        conversation.push(toolResult);
+      }
+    }
 
-      await parseSSEStream(
-        reader,
-        decoder,
-        (payload) => {
-          let parsed: {
-            choices?: Array<{
-              delta?: {
-                content?: string;
-                tool_calls?: RawToolCall[];
-              };
-            }>;
+    throw new Error("Model exceeded MCP tool call limit");
+  }
+
+  private async handleNonStreamingResponse(
+    response: Response,
+    onChunk: (chunk: string) => void,
+  ): Promise<string> {
+    const json = (await response.json()) as OpenRouterErrorResponse;
+    const content = json.choices?.[0]?.message?.content ?? "";
+    if (content) {
+      onChunk(content);
+    }
+    return content;
+  }
+
+  private extractToolCalls(
+    toolCalls?: OpenRouterToolCall[],
+  ): NonNullable<ChatMessage["tool_calls"]> {
+    if (!Array.isArray(toolCalls)) {
+      return [];
+    }
+
+    return toolCalls
+      .filter((toolCall) => toolCall?.type === "function" && toolCall.id && toolCall.function?.name)
+      .map((toolCall) => ({
+        id: toolCall.id!,
+        type: "function" as const,
+        function: {
+          name: toolCall.function!.name!,
+          arguments: toolCall.function?.arguments ?? "{}",
+        },
+      }));
+  }
+
+  private async executeSingleToolCall(
+    toolCall: NonNullable<ChatMessage["tool_calls"]>[number],
+  ): Promise<ChatMessage> {
+    let args: unknown = {};
+
+    try {
+      args = toolCall.function.arguments ? JSON.parse(toolCall.function.arguments) : {};
+    } catch {
+      return {
+        role: ChatRole.Tool,
+        tool_call_id: toolCall.id,
+        content: "Invalid tool arguments JSON",
+      };
+    }
+
+    try {
+      const result = await this.executeTool?.(toolCall.function.name, args);
+      const content = this.stringifyToolResult(result);
+      return {
+        role: ChatRole.Tool,
+        tool_call_id: toolCall.id,
+        content,
+      };
+    } catch (error) {
+      return {
+        role: ChatRole.Tool,
+        tool_call_id: toolCall.id,
+        content: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  private stringifyToolResult(result: unknown): string {
+    if (typeof result === "string") {
+      return result;
+    }
+
+    if (result === null || result === undefined) {
+      return "";
+    }
+
+    try {
+      return JSON.stringify(result);
+    } catch {
+      return String(result);
+    }
+  }
+
+  private async handleStreamingResponse(
+    response: Response,
+    onChunk: (chunk: string) => void,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let complete = "";
+
+    await parseSSEStream(
+      reader,
+      decoder,
+      (payload) => {
+        try {
+          const parsed = JSON.parse(payload) as {
+            choices?: Array<{ delta?: { content?: string } }>;
             error?: { message?: string };
           };
-
-          try {
-            parsed = JSON.parse(payload);
-          } catch {
-            return; // skip non-JSON chunks
-          }
-
           if (parsed.error?.message) {
             throw new Error(parsed.error.message);
           }
-
-          const delta = parsed.choices?.[0]?.delta;
-          if (!delta) return;
-
-          if (delta.content) {
-            completeContent += delta.content;
-            onChunk(delta.content);
+          const content = parsed.choices?.[0]?.delta?.content;
+          if (content) {
+            complete += content;
+            onChunk(content);
           }
-
-          if (delta.tool_calls) {
-            for (const tc of delta.tool_calls) {
-              const idx = tc.index ?? 0;
-              if (!rawAccumulator[idx]) {
-                rawAccumulator[idx] = {
-                  id: tc.id ?? "",
-                  type: "function",
-                  name: tc.function?.name ?? "",
-                  argumentsStr: "",
-                };
-              }
-              // id and name only arrive in the first delta for each index
-              if (tc.id) rawAccumulator[idx].id = tc.id;
-              if (tc.function?.name) rawAccumulator[idx].name = tc.function.name;
-              if (tc.function?.arguments) {
-                rawAccumulator[idx].argumentsStr += tc.function.arguments;
-              }
-            }
+        } catch (e) {
+          if (e instanceof Error && e.message !== "Unexpected end of JSON input") {
+            throw e;
           }
-        },
-        signal,
-      );
-
-      // Convert accumulated raw tool calls into ToolCall objects
-      const toolCalls: ToolCall[] = Object.values(rawAccumulator)
-        .filter((tc) => tc.name) // must have at least a name
-        .map((tc) => {
-          let args: unknown;
-          try {
-            args = tc.argumentsStr ? JSON.parse(tc.argumentsStr) : {};
-          } catch {
-            args = {};
-          }
-          return {
-            id: tc.id || `tool_${Math.random().toString(36).slice(2)}`,
-            type: "function" as const,
-            function: {
-              name: tc.name,
-              arguments: args,
-            },
-          };
-        });
-
-      if (toolCalls.length > 0 && this.executeTool) {
-        currentMessages = await this.handleToolCalls(currentMessages, toolCalls);
-        toolCallCount += toolCalls.length;
-        finalContent = completeContent;
-        continue;
-      }
-
-      // No tool calls, we're done
-      finalContent = completeContent;
-      break;
-    }
-
-    return finalContent;
-  }
-
-  /**
-   * Assemble complete ToolCall objects from raw (non-streaming) tool call data.
-   * Arguments in non-streaming responses are already a complete JSON string.
-   */
-  private assembleToolCalls(raw: RawToolCall[]): ToolCall[] {
-    return raw
-      .filter((tc) => tc.function?.name)
-      .map((tc, i) => {
-        let args: unknown;
-        try {
-          args = tc.function?.arguments ? JSON.parse(tc.function.arguments) : {};
-        } catch {
-          args = {};
+          // Invalid JSON — skip this chunk
         }
-        return {
-          id: tc.id ?? `tool_${i}`,
-          type: "function" as const,
-          function: {
-            name: tc.function!.name!,
-            arguments: args,
-          },
-        };
-      });
-  }
+      },
+      signal,
+    );
 
-  /**
-   * Handle tool calls and update the message history
-   */
-  private async handleToolCalls(
-    messages: ChatMessage[],
-    toolCalls: ToolCall[],
-  ): Promise<ChatMessage[]> {
-    if (!this.executeTool) {
-      return messages;
-    }
-
-    // Add the assistant's message with tool_calls in OpenAI format
-    const updatedMessages = [...messages];
-    updatedMessages.push({
-      role: ChatRole.Assistant,
-      content: "",
-      tool_calls: toolCalls.map((tc) => ({
-        id: tc.id,
-        type: "function" as const,
-        function: {
-          name: tc.function.name,
-          arguments: typeof tc.function.arguments === "string"
-            ? tc.function.arguments
-            : JSON.stringify(tc.function.arguments),
-        },
-      })),
-    });
-
-    // Execute each tool and add results as role:"tool" messages
-    for (const toolCall of toolCalls) {
-      try {
-        const result = await this.executeTool(toolCall.function.name, toolCall.function.arguments);
-
-        updatedMessages.push({
-          role: ChatRole.Tool,
-          tool_call_id: toolCall.id,
-          content: result.success ? (result.content ?? "") : `Error: ${result.error}`,
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        updatedMessages.push({
-          role: ChatRole.Tool,
-          tool_call_id: toolCall.id,
-          content: `Error: ${message}`,
-        });
-      }
-    }
-
-    return updatedMessages;
+    return complete;
   }
 }

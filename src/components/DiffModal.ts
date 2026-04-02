@@ -1,4 +1,4 @@
-import { Modal, App, Setting, Notice, TFile, ButtonComponent } from "obsidian";
+import { Modal, App, Setting, Notice, TFile, ButtonComponent, setIcon } from "obsidian";
 import { DiffView } from "./DiffView";
 import { PendingDiff } from "../services/FileChangeDetector";
 import { DiffService } from "../services/DiffService";
@@ -43,8 +43,10 @@ export class DiffModal extends Modal {
     this.titleEl.setText(`Review Changes: ${this.pendingDiff.file.name}`);
 
     // Info text
-    const infoEl = contentEl.createEl("p", {
-      cls: "oa-diff-info",
+    const infoEl = contentEl.createDiv({ cls: "oa-diff-info" });
+    const infoIcon = infoEl.createSpan({ cls: "oa-diff-info-icon" });
+    setIcon(infoIcon, "info");
+    infoEl.createSpan({
       text: "Review the changes below. Toggle selection mode to cherry-pick individual changes, or use Accept All/Reject All buttons.",
     });
 

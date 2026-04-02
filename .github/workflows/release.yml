@@ -1,0 +1,126 @@
+name: Manual Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version in x.y.z format
+        required: true
+        type: string
+      prerelease:
+        description: Mark the GitHub release as a prerelease
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate version metadata
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          node <<'EOF'
+          const fs = require('fs');
+
+          const version = process.env.RELEASE_VERSION;
+
+          if (!/^\d+\.\d+\.\d+$/.test(version)) {
+            throw new Error(`Version must use x.y.z format, received: ${version}`);
+          }
+
+          const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const manifest = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
+          const versions = JSON.parse(fs.readFileSync('versions.json', 'utf8'));
+
+          if (packageJson.version !== version) {
+            throw new Error(`package.json version ${packageJson.version} does not match ${version}`);
+          }
+
+          if (manifest.version !== version) {
+            throw new Error(`manifest.json version ${manifest.version} does not match ${version}`);
+          }
+
+          if (versions[version] !== manifest.minAppVersion) {
+            throw new Error(`versions.json entry for ${version} must equal minAppVersion ${manifest.minAppVersion}`);
+          }
+
+          if (manifest.isDesktopOnly !== true) {
+            throw new Error('manifest.json must keep isDesktopOnly set to true');
+          }
+          EOF
+
+      - name: Ensure release does not already exist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          if gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
+            echo "Release $RELEASE_VERSION already exists"
+            exit 1
+          fi
+
+      - name: Type check
+        run: npm run check
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build plugin
+        run: npm run build
+
+      - name: Verify release assets
+        run: |
+          test -f manifest.json
+          test -f main.js
+          test -f styles.css
+
+      - name: Create release notes
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          cat > release-notes.md <<EOF
+          Early desktop-only release for testers.
+
+          Assets:
+          - manifest.json
+          - main.js
+          - styles.css
+          EOF
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          EXTRA_ARGS=""
+          if [ "$PRERELEASE" = "true" ]; then
+            EXTRA_ARGS="--prerelease"
+          fi
+
+          gh release create "$RELEASE_VERSION" \
+            manifest.json main.js styles.css \
+            --target "$GITHUB_SHA" \
+            --title "$RELEASE_VERSION" \
+            --notes-file release-notes.md \
+            $EXTRA_ARGS

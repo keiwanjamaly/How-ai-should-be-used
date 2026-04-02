@@ -1,3 +1,4 @@
+import { setIcon } from "obsidian";
 import { FileDiff, DiffChange } from "../services/DiffService";
 import { calculateDiffStats } from "../utils/diffStats";
 
@@ -38,9 +39,13 @@ export class DiffView {
     
     const stats = this.calculateStats();
     const statsEl = header.createDiv({ cls: "oa-diff-stats" });
-    statsEl.createSpan({ 
-      text: `+${stats.added} -${stats.removed}`,
-      cls: "oa-diff-stats-text"
+    statsEl.createSpan({
+      text: `+${stats.added}`,
+      cls: "oa-diff-stats-text oa-diff-stat-added"
+    });
+    statsEl.createSpan({
+      text: `-${stats.removed}`,
+      cls: "oa-diff-stats-text oa-diff-stat-removed"
     });
 
     // Action buttons
@@ -150,18 +155,18 @@ export class DiffView {
       
       const acceptBtn = actions.createEl("button", {
         cls: "oa-diff-line-btn oa-diff-line-accept",
-        text: "✓",
         attr: { title: "Accept this change" }
       });
+      setIcon(acceptBtn, "check");
       acceptBtn.addEventListener("click", () => {
         this.callbacks.onAcceptLine?.(lineNumber);
       });
 
       const rejectBtn = actions.createEl("button", {
         cls: "oa-diff-line-btn oa-diff-line-reject",
-        text: "✕",
         attr: { title: "Reject this change" }
       });
+      setIcon(rejectBtn, "x");
       rejectBtn.addEventListener("click", () => {
         this.callbacks.onRejectLine?.(lineNumber);
       });

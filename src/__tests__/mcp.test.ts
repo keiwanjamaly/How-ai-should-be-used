@@ -6,6 +6,7 @@
 import {
 	isValidMCPServerConfig,
 	parseMCPServers,
+	normalizeMCPServers,
 	normalizeServerConfig,
 	formatMCPServers,
 	mergeMCPServers,
@@ -13,30 +14,9 @@ import {
 	parseQualifiedToolName,
 	DEFAULT_MCP_SETTINGS,
 	type MCPServers,
-} from "../types/mcp";
+} from "../types/mcp.ts";
+import { assertEqual, assertTrue, assertFalse, runTests } from "./testUtils.ts";
 
-// Simple test assertions
-function assertEqual(actual: unknown, expected: unknown, message?: string): void {
-	if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-		throw new Error(
-			message || `Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
-		);
-	}
-}
-
-function assertTrue(condition: boolean, message?: string): void {
-	if (!condition) {
-		throw new Error(message || "Expected true, got false");
-	}
-}
-
-function assertFalse(condition: boolean, message?: string): void {
-	if (condition) {
-		throw new Error(message || "Expected false, got true");
-	}
-}
-
-// Test isValidMCPServerConfig
 function testIsValidMCPServerConfig(): void {
 	console.log("Test: isValidMCPServerConfig");
 
@@ -93,7 +73,6 @@ function testIsValidMCPServerConfig(): void {
 	console.log("  PASSED");
 }
 
-// Test parseMCPServers
 function testParseMCPServers(): void {
 	console.log("Test: parseMCPServers");
 
@@ -145,7 +124,6 @@ function testParseMCPServers(): void {
 	console.log("  PASSED");
 }
 
-// Test formatMCPServers
 function testFormatMCPServers(): void {
 	console.log("Test: formatMCPServers");
 
@@ -166,7 +144,6 @@ function testFormatMCPServers(): void {
 	console.log("  PASSED");
 }
 
-// Test mergeMCPServers
 function testMergeMCPServers(): void {
 	console.log("Test: mergeMCPServers");
 
@@ -207,7 +184,6 @@ function testMergeMCPServers(): void {
 	console.log("  PASSED");
 }
 
-// Test getQualifiedToolName
 function testGetQualifiedToolName(): void {
 	console.log("Test: getQualifiedToolName");
 
@@ -226,7 +202,6 @@ function testGetQualifiedToolName(): void {
 	console.log("  PASSED");
 }
 
-// Test parseQualifiedToolName
 function testParseQualifiedToolName(): void {
 	console.log("Test: parseQualifiedToolName");
 
@@ -246,7 +221,6 @@ function testParseQualifiedToolName(): void {
 	console.log("  PASSED");
 }
 
-// Test DEFAULT_MCP_SETTINGS
 function testDefaultMCPSettings(): void {
 	console.log("Test: DEFAULT_MCP_SETTINGS");
 
@@ -258,7 +232,6 @@ function testDefaultMCPSettings(): void {
 	console.log("  PASSED");
 }
 
-// Test normalizeServerConfig — alt format (Cursor/Claude Desktop style)
 function testNormalizeAltFormat(): void {
 	console.log("Test: normalizeServerConfig - alt format");
 
@@ -303,39 +276,43 @@ function testNormalizeAltFormat(): void {
 	console.log("  PASSED");
 }
 
-// Run all tests
-function runTests(): void {
-	console.log("\nRunning MCP types tests...\n");
+function testNormalizeMCPServers(): void {
+	console.log("Test: normalizeMCPServers");
 
-	const tests = [
-		testIsValidMCPServerConfig,
-		testNormalizeAltFormat,
-		testParseMCPServers,
-		testFormatMCPServers,
-		testMergeMCPServers,
-		testGetQualifiedToolName,
-		testParseQualifiedToolName,
-		testDefaultMCPSettings,
-	];
+	const result = normalizeMCPServers({
+		duckduckgo: {
+			command: "uvx",
+			args: ["duckduckgo-mcp-server"],
+			env: {
+				DDG_REGION: "de-de",
+			},
+		},
+		invalid: {
+			foo: "bar",
+		},
+	});
 
-	let passed = 0;
-	let failed = 0;
+	assertTrue(result !== null, "Should accept object input");
+	assertEqual(Object.keys(result!).length, 1, "Should normalize valid entries and skip invalid ones");
+	assertEqual(
+		result!.duckduckgo.command,
+		["uvx", "duckduckgo-mcp-server"],
+		"Should normalize alt-format server maps from config files",
+	);
 
-	for (const test of tests) {
-		try {
-			test();
-			passed++;
-		} catch (error) {
-			failed++;
-			console.error(`  FAILED: ${error instanceof Error ? error.message : String(error)}`);
-		}
-	}
+	assertEqual(normalizeMCPServers([]), null, "Should reject array input");
 
-	console.log(`\n${passed}/${tests.length} tests passed${failed > 0 ? `, ${failed} failed` : ""}\n`);
-
-	if (failed > 0) {
-		process.exit(1);
-	}
+	console.log("  PASSED");
 }
 
-runTests();
+runTests("MCP Types Tests", [
+	testIsValidMCPServerConfig,
+	testNormalizeAltFormat,
+	testNormalizeMCPServers,
+	testParseMCPServers,
+	testFormatMCPServers,
+	testMergeMCPServers,
+	testGetQualifiedToolName,
+	testParseQualifiedToolName,
+	testDefaultMCPSettings,
+]);

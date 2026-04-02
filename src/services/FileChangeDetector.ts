@@ -10,7 +10,6 @@ export interface PendingDiff {
 export type ChangeHandler = (pendingDiff: PendingDiff) => void;
 
 export class FileChangeDetector extends Component {
-  private readonly diffService: DiffService;
   private readonly baselines = new Map<string, string>();
   private readonly pendingDiffs = new Map<string, PendingDiff>();
   private readonly aiModifiedPaths = new Set<string>();
@@ -18,9 +17,8 @@ export class FileChangeDetector extends Component {
   private isEnabled = true;
   private editorCheckInterval: number | null = null;
 
-  constructor(private readonly app: App) {
+  constructor(private readonly app: App, private readonly diffService: DiffService) {
     super();
-    this.diffService = new DiffService(app);
   }
 
   /**
@@ -31,17 +29,17 @@ export class FileChangeDetector extends Component {
   }
 
   /**
+   * Returns whether change detection is currently enabled
+   */
+  getEnabled(): boolean {
+    return this.isEnabled;
+  }
+
+  /**
    * Enable or disable change detection
    */
   setEnabled(enabled: boolean): void {
     this.isEnabled = enabled;
-  }
-
-  /**
-   * Get the current enabled state of change detection
-   */
-  getEnabled(): boolean {
-    return this.isEnabled;
   }
 
   /**
@@ -150,15 +148,19 @@ export class FileChangeDetector extends Component {
     for (const leaf of leaves) {
       const view = leaf.view;
       if (!this.isMarkdownView(view) || !view.file || !view.editor) continue;
-      
+
       if (view.getMode() === "source") {
-        const content = view.editor.getValue();
-        const baseline = this.baselines.get(view.file.path);
-        
-        // If we have a baseline and it differs from current editor content
-        // update the baseline (user edited the file)
-        if (baseline !== undefined && baseline !== content) {
-          this.baselines.set(view.file.path, content);
+        try {
+          const content = view.editor.getValue();
+          const baseline = this.baselines.get(view.file.path);
+
+          // If we have a baseline and it differs from current editor content
+          // update the baseline (user edited the file)
+          if (baseline !== undefined && baseline !== content) {
+            this.baselines.set(view.file.path, content);
+          }
+        } catch (error) {
+          console.error(`Failed to check editor for ${view.file.path}:`, error);
         }
       }
     }

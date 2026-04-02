@@ -62,4 +62,24 @@ export async function parseSSEStream(
   return complete;
 }
 
+/**
+ * Parses a single SSE data payload as JSON and returns the content field
+ * for OpenAI-compatible streaming responses.
+ */
+export function parseOpenAIStreamChunk(payload: string): { content?: string; error?: string } {
+  try {
+    const parsed = JSON.parse(payload) as {
+      choices?: Array<{ delta?: { content?: string } }>;
+      error?: { message?: string };
+    };
 
+    if (parsed.error?.message) {
+      return { error: parsed.error.message };
+    }
+
+    const content = parsed.choices?.[0]?.delta?.content;
+    return { content };
+  } catch {
+    return {};
+  }
+}
