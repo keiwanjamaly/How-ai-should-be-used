@@ -6,6 +6,7 @@
 import {
 	isValidMCPServerConfig,
 	parseMCPServers,
+	normalizeMCPServers,
 	normalizeServerConfig,
 	formatMCPServers,
 	mergeMCPServers,
@@ -275,9 +276,39 @@ function testNormalizeAltFormat(): void {
 	console.log("  PASSED");
 }
 
+function testNormalizeMCPServers(): void {
+	console.log("Test: normalizeMCPServers");
+
+	const result = normalizeMCPServers({
+		duckduckgo: {
+			command: "uvx",
+			args: ["duckduckgo-mcp-server"],
+			env: {
+				DDG_REGION: "de-de",
+			},
+		},
+		invalid: {
+			foo: "bar",
+		},
+	});
+
+	assertTrue(result !== null, "Should accept object input");
+	assertEqual(Object.keys(result!).length, 1, "Should normalize valid entries and skip invalid ones");
+	assertEqual(
+		result!.duckduckgo.command,
+		["uvx", "duckduckgo-mcp-server"],
+		"Should normalize alt-format server maps from config files",
+	);
+
+	assertEqual(normalizeMCPServers([]), null, "Should reject array input");
+
+	console.log("  PASSED");
+}
+
 runTests("MCP Types Tests", [
 	testIsValidMCPServerConfig,
 	testNormalizeAltFormat,
+	testNormalizeMCPServers,
 	testParseMCPServers,
 	testFormatMCPServers,
 	testMergeMCPServers,

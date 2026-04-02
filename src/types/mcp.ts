@@ -180,6 +180,16 @@ export function parseMCPServers(json: string): MCPServers | null {
 		return null;
 	}
 
+	return normalizeMCPServers(parsed);
+}
+
+/**
+ * Normalize a raw server map into validated MCP servers.
+ * Returns null if the top-level value is not an object.
+ */
+export function normalizeMCPServers(value: unknown): MCPServers | null {
+	const parsed = value;
+
 	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
 		return null;
 	}

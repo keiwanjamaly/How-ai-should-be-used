@@ -13,7 +13,7 @@ import type {
 	MCPServers,
 	ExternalMCPConfig,
 } from "../types/mcp";
-import { getQualifiedToolName } from "../types/mcp";
+import { getQualifiedToolName, normalizeMCPServers } from "../types/mcp";
 
 /**
  * Cached login-shell PATH promise, resolved once on first use.
@@ -499,7 +499,13 @@ export class MCPService {
 
 			// Validate that mcp field exists and contains valid server configs
 			if (config.mcp && typeof config.mcp === "object") {
-				return config;
+				const normalized = normalizeMCPServers(config.mcp);
+				if (normalized) {
+					return {
+						...config,
+						mcp: normalized,
+					};
+				}
 			}
 
 			return null;
