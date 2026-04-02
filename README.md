@@ -83,9 +83,9 @@ For local development, copy `main.js`, `manifest.json`, and `styles.css` into yo
 
 ## Releasing
 
-The repository includes a manual GitHub Actions release workflow that builds the plugin and publishes the required Obsidian assets.
+The repository includes an automatic GitHub Actions release workflow that builds the plugin and publishes the required Obsidian assets whenever a pushed commit bumps the plugin version.
 
-1. Bump the release version everywhere with:
+1. Bump the release version in `package.json`, `manifest.json`, and `versions.json`, or use:
 
 ```bash
 npm run release:prepare -- 0.1.1
@@ -94,15 +94,15 @@ npm run release:prepare -- 0.1.1
 2. Review the changed files:
 
 ```bash
-git diff package.json manifest.json versions.json
+git diff package.json package-lock.json manifest.json versions.json
 ```
 
 3. Commit and push the version bump to GitHub.
-4. In GitHub, open `Actions` -> `Manual Release`.
-5. Click `Run workflow`, choose the branch to release from, and enter the same version such as `0.1.1`.
-6. Leave `prerelease` enabled for tester builds unless you intentionally want a full release.
+4. The `Release On Version Bump` workflow will run automatically.
 
-The workflow will validate the version, run checks and tests, build the plugin, create the GitHub release tag, and upload `manifest.json`, `main.js`, and `styles.css`.
+The workflow validates the version metadata, detects whether the version changed from the previous commit, runs checks and tests, builds the plugin, creates the GitHub release tag, and uploads `manifest.json`, `main.js`, and `styles.css`.
+
+Releases from `develop`, versions starting with `0.`, and versions with a prerelease suffix such as `0.2.0-rc1` are published as GitHub prereleases automatically.
 
 ## Status
 

@@ -1,6 +1,6 @@
 {
   "name": "obsidian-ai-chat",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Chat with LLMs from a sidebar panel in Obsidian using OpenRouter.",
   "main": "main.js",
   "scripts": {

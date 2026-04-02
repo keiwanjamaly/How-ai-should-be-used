@@ -1,20 +1,21 @@
-name: Manual Release
+name: Release On Version Bump
 
 on:
-  workflow_dispatch:
-    inputs:
-      version:
-        description: Release version in x.y.z format
-        required: true
-        type: string
-      prerelease:
-        description: Mark the GitHub release as a prerelease
-        required: true
-        default: true
-        type: boolean
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - package.json
+      - manifest.json
+      - versions.json
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -24,7 +25,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 2
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -35,25 +36,21 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Validate version metadata
-        env:
-          RELEASE_VERSION: ${{ inputs.version }}
+      - name: Detect version bump
+        id: version
         run: |
           node <<'EOF'
           const fs = require('fs');
+          const { execSync } = require('child_process');
 
-          const version = process.env.RELEASE_VERSION;
-
-          if (!/^\d+\.\d+\.\d+$/.test(version)) {
-            throw new Error(`Version must use x.y.z format, received: ${version}`);
-          }
-
+          const semverPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
           const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
           const manifest = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
           const versions = JSON.parse(fs.readFileSync('versions.json', 'utf8'));
+          const version = packageJson.version;
 
-          if (packageJson.version !== version) {
-            throw new Error(`package.json version ${packageJson.version} does not match ${version}`);
+          if (!semverPattern.test(version)) {
+            throw new Error(`package.json version must use semantic versioning, received: ${version}`);
           }
 
           if (manifest.version !== version) {
@@ -67,39 +64,77 @@ jobs:
           if (manifest.isDesktopOnly !== true) {
             throw new Error('manifest.json must keep isDesktopOnly set to true');
           }
+
+          let previousVersion = null;
+          try {
+            previousVersion = JSON.parse(execSync('git show HEAD^:package.json', { encoding: 'utf8' })).version;
+          } catch (error) {
+            previousVersion = null;
+          }
+
+          const shouldRelease = previousVersion !== version;
+          const output = [
+            `version=${version}`,
+            `previous_version=${previousVersion || ''}`,
+            `should_release=${shouldRelease ? 'true' : 'false'}`,
+          ].join('\n');
+
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `${output}\n`);
+
+          if (!shouldRelease) {
+            console.log(`Version unchanged at ${version}; skipping release.`);
+          } else {
+            console.log(`Detected version bump from ${previousVersion || 'none'} to ${version}.`);
+          }
           EOF
 
-      - name: Ensure release does not already exist
+      - name: Stop if version did not change
+        if: steps.version.outputs.should_release != 'true'
+        run: exit 0
+
+      - name: Check whether release already exists
+        if: steps.version.outputs.should_release == 'true'
+        id: release_exists
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: |
           if gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
-            echo "Release $RELEASE_VERSION already exists"
-            exit 1
+            echo "Release $RELEASE_VERSION already exists; skipping."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Type check
+        if: steps.version.outputs.should_release == 'true' && steps.release_exists.outputs.exists != 'true'
         run: npm run check
 
       - name: Run tests
+        if: steps.version.outputs.should_release == 'true' && steps.release_exists.outputs.exists != 'true'
         run: npm test
 
       - name: Build plugin
+        if: steps.version.outputs.should_release == 'true' && steps.release_exists.outputs.exists != 'true'
         run: npm run build
 
       - name: Verify release assets
+        if: steps.version.outputs.should_release == 'true' && steps.release_exists.outputs.exists != 'true'
         run: |
           test -f manifest.json
           test -f main.js
           test -f styles.css
 
       - name: Create release notes
+        if: steps.version.outputs.should_release == 'true' && steps.release_exists.outputs.exists != 'true'
         env:
-          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: |
           cat > release-notes.md <<EOF
           Early desktop-only release for testers.
+
+          Branch: ${GITHUB_REF_NAME}
+          Version: ${RELEASE_VERSION}
 
           Assets:
           - manifest.json
@@ -108,13 +143,13 @@ jobs:
           EOF
 
       - name: Create GitHub release
+        if: steps.version.outputs.should_release == 'true' && steps.release_exists.outputs.exists != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ inputs.version }}
-          PRERELEASE: ${{ inputs.prerelease }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: |
           EXTRA_ARGS=""
-          if [ "$PRERELEASE" = "true" ]; then
+          if [[ "$RELEASE_VERSION" == 0.* ]] || [[ "$RELEASE_VERSION" == *-* ]] || [ "$GITHUB_REF_NAME" != "main" ]; then
             EXTRA_ARGS="--prerelease"
           fi
 
