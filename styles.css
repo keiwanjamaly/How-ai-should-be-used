@@ -112,13 +112,31 @@
   max-width: 85%;
   border-radius: var(--radius-l);
   padding: 10px 14px;
-  white-space: pre-wrap;
+  white-space: normal;
   word-break: break-word;
   line-height: 1.5;
   font-size: 0.9rem;
   cursor: text;
   -webkit-user-select: text !important;
   user-select: text !important;
+}
+
+.oa-chat-message-content > :first-child {
+  margin-top: 0;
+}
+
+.oa-chat-message-content > :last-child {
+  margin-bottom: 0;
+}
+
+.oa-chat-message-content pre,
+.oa-chat-message-content code {
+  white-space: pre-wrap;
+}
+
+.oa-chat-message-content mjx-container {
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .oa-chat-message-content ::selection,

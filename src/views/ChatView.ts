@@ -1,4 +1,4 @@
-import { ItemView, Notice, WorkspaceLeaf, TFile, setIcon } from "obsidian";
+import { ItemView, MarkdownRenderer, Notice, WorkspaceLeaf, TFile, setIcon } from "obsidian";
 import type ObsidianAIChatPlugin from "../main";
 import type { LLMStrategy } from "../strategies/LLMStrategy";
 import { ChatRole, type ChatMessage, type ChatSession } from "../types";
@@ -35,6 +35,7 @@ export class ChatView extends ItemView {
   private detectedAIFileChange: DetectedFileChange | null = null;
   private messageWrappers = new Map<ChatMessage, HTMLDivElement>();
   private messageCleanupMap = new Map<ChatMessage, () => void>();
+  private messageRenderState = new WeakMap<HTMLDivElement, { rendering: boolean; pending: boolean; message: ChatMessage }>();
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -430,7 +431,7 @@ export class ChatView extends ItemView {
     const content = wrapper.createDiv({
       cls: "oa-chat-message-content",
     });
-    content.setText(message.content);
+    this.renderMessageContent(content, message);
 
     if (message.role !== ChatRole.System) {
       const toolbar = wrapper.createDiv({ cls: "oa-chat-message-toolbar" });
@@ -477,6 +478,74 @@ export class ChatView extends ItemView {
 
     this.messagesEl.scrollTo({ top: this.messagesEl.scrollHeight });
     return content;
+  }
+
+  private renderMessageContent(contentEl: HTMLDivElement, message: ChatMessage): void {
+    const existing = this.messageRenderState.get(contentEl);
+    if (existing) {
+      existing.pending = true;
+      existing.message = message;
+      if (existing.rendering) {
+        return;
+      }
+    }
+
+    const state = existing ?? {
+      rendering: false,
+      pending: true,
+      message,
+    };
+
+    this.messageRenderState.set(contentEl, state);
+    state.pending = true;
+    state.message = message;
+
+    void this.processMessageRender(contentEl, state);
+  }
+
+  private async processMessageRender(
+    contentEl: HTMLDivElement,
+    state: { rendering: boolean; pending: boolean; message: ChatMessage },
+  ): Promise<void> {
+    if (state.rendering) {
+      return;
+    }
+
+    state.rendering = true;
+
+    try {
+      while (state.pending) {
+        state.pending = false;
+        const { message } = state;
+        const renderedContent = this.normalizeMathDelimiters(message.content);
+
+        contentEl.empty();
+
+        try {
+          await MarkdownRenderer.render(
+            this.app,
+            renderedContent,
+            contentEl,
+            this.getActiveFile()?.path ?? "",
+            this,
+          );
+        } catch (error) {
+          console.error("Failed to render chat message as markdown:", error);
+          contentEl.setText(message.content);
+        }
+      }
+    } finally {
+      state.rendering = false;
+      if (state.pending) {
+        void this.processMessageRender(contentEl, state);
+      }
+    }
+  }
+
+  private normalizeMathDelimiters(content: string): string {
+    return content
+      .replace(/\\\[([\s\S]*?)\\\]/g, (_match, math: string) => `$$\n${math.trim()}\n$$`)
+      .replace(/\\\(([^]+?)\\\)/g, (_match, math: string) => `$${math.trim()}$`);
   }
 
   /**
@@ -610,7 +679,7 @@ export class ChatView extends ItemView {
         requestMessages,
         (chunk: string) => {
           assistantMessage.content += chunk;
-          assistantContentEl.setText(assistantMessage.content);
+          this.renderMessageContent(assistantContentEl, assistantMessage);
           this.messagesEl.scrollTo({ top: this.messagesEl.scrollHeight });
         },
         this.currentAbortController.signal,
@@ -624,7 +693,7 @@ export class ChatView extends ItemView {
         new Notice(`AI request failed: ${message}`);
       }
 
-      assistantContentEl.setText(assistantMessage.content);
+      this.renderMessageContent(assistantContentEl, assistantMessage);
     } finally {
       this.currentAbortController = null;
       this.updateBusyState(false);
