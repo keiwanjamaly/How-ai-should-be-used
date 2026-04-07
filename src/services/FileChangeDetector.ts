@@ -1,5 +1,6 @@
-import { App, TFile, MarkdownView, Component } from "obsidian";
+import { App, TFile, MarkdownView, MarkdownFileInfo, Editor, Component } from "obsidian";
 import { FileDiff, DiffService } from "./DiffService";
+import { EditorSnapshot, isRecentLocalEdit } from "../utils/fileChangeDetection";
 
 export interface PendingDiff {
   file: TFile;
@@ -13,9 +14,9 @@ export class FileChangeDetector extends Component {
   private readonly baselines = new Map<string, string>();
   private readonly pendingDiffs = new Map<string, PendingDiff>();
   private readonly aiModifiedPaths = new Set<string>();
+  private readonly editorSnapshots = new Map<string, EditorSnapshot>();
   private changeHandler?: ChangeHandler;
   private isEnabled = true;
-  private editorCheckInterval: number | null = null;
 
   constructor(private readonly app: App, private readonly diffService: DiffService) {
     super();
@@ -49,7 +50,14 @@ export class FileChangeDetector extends Component {
     // Listen for active leaf changes to track currently open files
     this.registerEvent(
       this.app.workspace.on("active-leaf-change", () => {
-        this.updateBaselines();
+        void this.updateBaselines();
+      })
+    );
+
+    // Track editor content immediately so normal typing is not mistaken for an external write.
+    this.registerEvent(
+      this.app.workspace.on("editor-change", (editor, info) => {
+        this.handleEditorChange(editor, info);
       })
     );
 
@@ -57,28 +65,18 @@ export class FileChangeDetector extends Component {
     this.registerEvent(
       this.app.vault.on("modify", (file) => {
         if (!(file instanceof TFile)) return;
-        this.handleFileModify(file);
+        void this.handleFileModify(file);
       })
     );
 
-    // Set up interval to check editor contents for changes
-    this.editorCheckInterval = window.setInterval(() => {
-      if (this.isEnabled) {
-        this.checkOpenEditors();
-      }
-    }, 1000);
-
     // Initialize baselines for currently open files
-    this.updateBaselines();
+    void this.updateBaselines();
   }
 
   /**
    * Clean up when the component is unloaded
    */
   onunload(): void {
-    if (this.editorCheckInterval) {
-      clearInterval(this.editorCheckInterval);
-    }
     super.onunload();
   }
 
@@ -129,41 +127,36 @@ export class FileChangeDetector extends Component {
     this.pendingDiffs.clear();
   }
 
-  /**
-   * Type guard to check if a view is a MarkdownView
-   */
   private isMarkdownView(view: unknown): view is MarkdownView {
     return view instanceof MarkdownView;
   }
 
   /**
-   * Check open editors for changes
+   * Track live editor changes so in-app edits don't get flagged as external
    */
-  private checkOpenEditors(): void {
-    const leaves = this.app.workspace.getLeavesOfType("markdown");
-    
-    // Skip if no editors are open to save resources
-    if (leaves.length === 0) return;
-    
-    for (const leaf of leaves) {
-      const view = leaf.view;
-      if (!this.isMarkdownView(view) || !view.file || !view.editor) continue;
-
-      if (view.getMode() === "source") {
-        try {
-          const content = view.editor.getValue();
-          const baseline = this.baselines.get(view.file.path);
-
-          // If we have a baseline and it differs from current editor content
-          // update the baseline (user edited the file)
-          if (baseline !== undefined && baseline !== content) {
-            this.baselines.set(view.file.path, content);
-          }
-        } catch (error) {
-          console.error(`Failed to check editor for ${view.file.path}:`, error);
-        }
-      }
+  private handleEditorChange(editor: Editor, info: MarkdownView | MarkdownFileInfo): void {
+    if (!this.isEnabled) {
+      return;
     }
+
+    const file = info.file;
+    if (!file || file.extension !== "md") {
+      return;
+    }
+
+    try {
+      this.recordEditorSnapshot(file.path, editor.getValue());
+    } catch (error) {
+      console.error(`Failed to capture editor state for ${file.path}:`, error);
+    }
+  }
+
+  private recordEditorSnapshot(path: string, content: string): void {
+    this.baselines.set(path, content);
+    this.editorSnapshots.set(path, {
+      content,
+      timestamp: Date.now(),
+    });
   }
 
   /**
@@ -171,15 +164,14 @@ export class FileChangeDetector extends Component {
    */
   private async updateBaselines(): Promise<void> {
     const leaves = this.app.workspace.getLeavesOfType("markdown");
-    
-    // Process files in parallel for better performance
+
     const promises = leaves.map(async (leaf) => {
       const view = leaf.view;
       if (!this.isMarkdownView(view) || !view.file) return;
-      
+
       try {
-        const content = await this.app.vault.read(view.file);
-        this.baselines.set(view.file.path, content);
+        const content = view.editor ? view.editor.getValue() : await this.app.vault.read(view.file);
+        this.recordEditorSnapshot(view.file.path, content);
       } catch (error) {
         console.error(`Failed to read baseline for ${view.file.path}:`, error);
       }
@@ -220,6 +212,11 @@ export class FileChangeDetector extends Component {
       currentContent = await this.app.vault.read(file);
     } catch (error) {
       console.error(`Failed to read file ${file.path}:`, error);
+      return;
+    }
+
+    if (isRecentLocalEdit(currentContent, this.editorSnapshots.get(file.path))) {
+      this.baselines.set(file.path, currentContent);
       return;
     }
 
