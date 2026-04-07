@@ -1,7 +1,7 @@
 import { ItemView, MarkdownRenderer, Notice, WorkspaceLeaf, TFile, setIcon } from "obsidian";
 import type ObsidianAIChatPlugin from "../main";
 import type { LLMStrategy } from "../strategies/LLMStrategy";
-import { ChatRole, type ChatMessage, type ChatSession } from "../types";
+import { ChatRole, type ChatMessage, type ChatSession, type MCPCallEvent } from "../types";
 import { FileChangeParser, type DetectedFileChange } from "../services/FileChangeParser";
 import type { FileDiff } from "../services/DiffService";
 import { DiffModal } from "../components/DiffModal";
@@ -533,6 +533,10 @@ export class ChatView extends ItemView {
           console.error("Failed to render chat message as markdown:", error);
           contentEl.setText(message.content);
         }
+
+        if (message.mcpCalls?.length) {
+          this.renderMCPCalls(contentEl, message.mcpCalls);
+        }
       }
     } finally {
       state.rendering = false;
@@ -546,6 +550,51 @@ export class ChatView extends ItemView {
     return content
       .replace(/\\\[([\s\S]*?)\\\]/g, (_match, math: string) => `$$\n${math.trim()}\n$$`)
       .replace(/\\\(([^]+?)\\\)/g, (_match, math: string) => `$${math.trim()}$`);
+  }
+
+  private renderMCPCalls(contentEl: HTMLDivElement, calls: MCPCallEvent[]): void {
+    const callsEl = contentEl.createDiv({ cls: "oa-chat-mcp-calls" });
+    const titleEl = callsEl.createDiv({ cls: "oa-chat-mcp-title" });
+    titleEl.setText(calls.length === 1 ? "1 MCP call" : `${calls.length} MCP calls`);
+
+    for (const call of calls) {
+      const callEl = callsEl.createDiv({ cls: "oa-chat-mcp-call" });
+      callEl.toggleClass("oa-chat-mcp-call-success", call.success);
+      callEl.toggleClass("oa-chat-mcp-call-error", !call.success);
+
+      const summaryEl = callEl.createDiv({ cls: "oa-chat-mcp-summary" });
+      summaryEl.createSpan({
+        cls: "oa-chat-mcp-status",
+        text: call.success ? "Success" : "Error",
+      });
+      summaryEl.createSpan({
+        cls: "oa-chat-mcp-tool",
+        text: `${call.serverName} -> ${call.toolName}`,
+      });
+      summaryEl.createSpan({
+        cls: "oa-chat-mcp-duration",
+        text: `${call.durationMs} ms`,
+      });
+
+      const detailsEl = callEl.createEl("details", { cls: "oa-chat-mcp-details" });
+      detailsEl.createEl("summary", {
+        cls: "oa-chat-mcp-details-summary",
+        text: "Details",
+      });
+
+      this.createMCPDetailBlock(detailsEl, "Arguments", call.argumentsText);
+      if (call.success) {
+        this.createMCPDetailBlock(detailsEl, "Result", call.resultText ?? "");
+      } else {
+        this.createMCPDetailBlock(detailsEl, "Error", call.errorText ?? "");
+      }
+    }
+  }
+
+  private createMCPDetailBlock(parent: HTMLElement, label: string, text: string): void {
+    const blockEl = parent.createDiv({ cls: "oa-chat-mcp-detail-block" });
+    blockEl.createDiv({ cls: "oa-chat-mcp-detail-label", text: label });
+    blockEl.createEl("pre", { cls: "oa-chat-mcp-detail-text", text: text || "No data" });
   }
 
   /**
@@ -679,6 +728,11 @@ export class ChatView extends ItemView {
         requestMessages,
         (chunk: string) => {
           assistantMessage.content += chunk;
+          this.renderMessageContent(assistantContentEl, assistantMessage);
+          this.messagesEl.scrollTo({ top: this.messagesEl.scrollHeight });
+        },
+        (call: MCPCallEvent) => {
+          assistantMessage.mcpCalls = [...(assistantMessage.mcpCalls ?? []), call];
           this.renderMessageContent(assistantContentEl, assistantMessage);
           this.messagesEl.scrollTo({ top: this.messagesEl.scrollHeight });
         },

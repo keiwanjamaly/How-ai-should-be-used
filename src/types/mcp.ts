@@ -66,6 +66,18 @@ export interface MCPToolResult {
 	content?: string;
 	/** Error message (for failure) */
 	error?: string;
+	/** Structured execution details for UI/debugging */
+	call?: {
+		serverName: string;
+		toolName: string;
+		qualifiedToolName: string;
+		argumentsText: string;
+		durationMs: number;
+		startedAt: number;
+		success: boolean;
+		resultText?: string;
+		errorText?: string;
+	};
 }
 
 /**

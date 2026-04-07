@@ -371,8 +371,21 @@ export class MCPService {
 			return {
 				success: false,
 				error: `Tool "${qualifiedToolName}" not found`,
+				call: {
+					serverName: "unknown",
+					toolName: qualifiedToolName,
+					qualifiedToolName,
+					argumentsText: this.safeStringify(args),
+					durationMs: 0,
+					startedAt: Date.now(),
+					success: false,
+					errorText: `Tool "${qualifiedToolName}" not found`,
+				},
 			};
 		}
+
+		const startedAt = Date.now();
+		const argumentsText = this.safeStringify(args);
 
 		try {
 			const result = await this.sendRequest(
@@ -413,13 +426,49 @@ export class MCPService {
 			return {
 				success: true,
 				content: output,
+				call: {
+					serverName: toolInfo.serverName,
+					toolName: toolInfo.toolName,
+					qualifiedToolName,
+					argumentsText,
+					durationMs: Date.now() - startedAt,
+					startedAt,
+					success: true,
+					resultText: output,
+				},
 			};
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			return {
 				success: false,
 				error: message,
+				call: {
+					serverName: toolInfo.serverName,
+					toolName: toolInfo.toolName,
+					qualifiedToolName,
+					argumentsText,
+					durationMs: Date.now() - startedAt,
+					startedAt,
+					success: false,
+					errorText: message,
+				},
 			};
+		}
+	}
+
+	private safeStringify(value: unknown): string {
+		if (typeof value === "string") {
+			return value;
+		}
+
+		if (value === undefined) {
+			return "{}";
+		}
+
+		try {
+			return JSON.stringify(value, null, 2);
+		} catch {
+			return String(value);
 		}
 	}
 

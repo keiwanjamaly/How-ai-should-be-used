@@ -8,9 +8,22 @@ export enum ChatRole {
   Tool = "tool",
 }
 
+export interface MCPCallEvent {
+  serverName: string;
+  toolName: string;
+  qualifiedToolName: string;
+  argumentsText: string;
+  durationMs: number;
+  startedAt: number;
+  success: boolean;
+  resultText?: string;
+  errorText?: string;
+}
+
 export interface ChatMessage {
   role: ChatRole;
   content: string;
+  mcpCalls?: MCPCallEvent[];
   tool_calls?: Array<{
     id: string;
     type: "function";

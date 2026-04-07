@@ -134,6 +134,93 @@
   white-space: pre-wrap;
 }
 
+.oa-chat-mcp-calls {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--background-modifier-border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.oa-chat-mcp-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.oa-chat-mcp-call {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-primary-alt, var(--background-primary));
+  overflow: hidden;
+}
+
+.oa-chat-mcp-call-success {
+  border-left: 3px solid var(--color-green, #2e8b57);
+}
+
+.oa-chat-mcp-call-error {
+  border-left: 3px solid var(--color-red, #c84b31);
+}
+
+.oa-chat-mcp-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  font-size: 0.8rem;
+}
+
+.oa-chat-mcp-status {
+  font-weight: 600;
+}
+
+.oa-chat-mcp-tool {
+  color: var(--text-normal);
+}
+
+.oa-chat-mcp-duration {
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+.oa-chat-mcp-details {
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.oa-chat-mcp-details-summary {
+  cursor: pointer;
+  padding: 8px 10px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.oa-chat-mcp-detail-block {
+  padding: 0 10px 10px;
+}
+
+.oa-chat-mcp-detail-label {
+  margin-bottom: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.oa-chat-mcp-detail-text {
+  margin: 0;
+  padding: 8px;
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+  font-size: 0.75rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+
 .oa-chat-message-content mjx-container {
   overflow-x: auto;
   overflow-y: hidden;

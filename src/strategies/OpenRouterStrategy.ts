@@ -1,7 +1,7 @@
-import type { ChatMessage, OpenRouterSettings } from "../types";
+import type { ChatMessage, MCPCallEvent, OpenRouterSettings } from "../types";
 import { ChatRole } from "../types";
 import type { LLMStrategy } from "./LLMStrategy";
-import type { MCPTool } from "../types/mcp";
+import type { MCPTool, MCPToolResult } from "../types/mcp";
 import { parseSSEStream } from "../utils/sseParser";
 
 interface OpenRouterErrorResponse {
@@ -69,10 +69,11 @@ export class OpenRouterStrategy implements LLMStrategy {
   async sendMessage(
     messages: ChatMessage[],
     onChunk: (chunk: string) => void,
+    onMCPCall?: (call: MCPCallEvent) => void,
     signal?: AbortSignal,
   ): Promise<string> {
     if (this.mcpTools.length > 0 && this.executeTool) {
-      return this.sendMessageWithTools(messages, onChunk, signal);
+      return this.sendMessageWithTools(messages, onChunk, onMCPCall, signal);
     }
 
     const response = await fetch(this.endpoint, {
@@ -173,6 +174,7 @@ export class OpenRouterStrategy implements LLMStrategy {
   private async sendMessageWithTools(
     messages: ChatMessage[],
     onChunk: (chunk: string) => void,
+    onMCPCall?: (call: MCPCallEvent) => void,
     signal?: AbortSignal,
   ): Promise<string> {
     const conversation = [...messages];
@@ -223,6 +225,10 @@ export class OpenRouterStrategy implements LLMStrategy {
 
       for (const toolCall of toolCalls) {
         const toolResult = await this.executeSingleToolCall(toolCall);
+        const mcpCall = toolResult.mcpCalls?.[0];
+        if (mcpCall && onMCPCall) {
+          onMCPCall(mcpCall);
+        }
         conversation.push(toolResult);
       }
     }
@@ -273,16 +279,27 @@ export class OpenRouterStrategy implements LLMStrategy {
         role: ChatRole.Tool,
         tool_call_id: toolCall.id,
         content: "Invalid tool arguments JSON",
+        mcpCalls: [{
+          serverName: "unknown",
+          toolName: toolCall.function.name,
+          qualifiedToolName: toolCall.function.name,
+          argumentsText: toolCall.function.arguments ?? "{}",
+          durationMs: 0,
+          startedAt: Date.now(),
+          success: false,
+          errorText: "Invalid tool arguments JSON",
+        }],
       };
     }
 
     try {
-      const result = await this.executeTool?.(toolCall.function.name, args);
+      const result = await this.executeTool?.(toolCall.function.name, args) as MCPToolResult | undefined;
       const content = this.stringifyToolResult(result);
       return {
         role: ChatRole.Tool,
         tool_call_id: toolCall.id,
         content,
+        mcpCalls: result?.call ? [result.call] : undefined,
       };
     } catch (error) {
       return {
@@ -294,6 +311,13 @@ export class OpenRouterStrategy implements LLMStrategy {
   }
 
   private stringifyToolResult(result: unknown): string {
+    if (this.isMCPToolResult(result)) {
+      if (result.success) {
+        return result.content ?? "";
+      }
+      return result.error ?? "";
+    }
+
     if (typeof result === "string") {
       return result;
     }
@@ -346,5 +370,9 @@ export class OpenRouterStrategy implements LLMStrategy {
     );
 
     return complete;
+  }
+
+  private isMCPToolResult(result: unknown): result is MCPToolResult {
+    return typeof result === "object" && result !== null && "success" in result;
   }
 }

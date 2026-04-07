@@ -1,4 +1,4 @@
-import type { ChatMessage } from "../types";
+import type { ChatMessage, MCPCallEvent } from "../types";
 
 export interface ToolCall {
   id: string;
@@ -14,6 +14,7 @@ export interface LLMStrategy {
   sendMessage(
     messages: ChatMessage[],
     onChunk: (chunk: string) => void,
+    onMCPCall?: (call: MCPCallEvent) => void,
     signal?: AbortSignal,
   ): Promise<string>;
   validateConfig(): string | null;
