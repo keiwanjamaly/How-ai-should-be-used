@@ -1,6 +1,6 @@
 import { App, TFile, MarkdownView, MarkdownFileInfo, Editor, Component } from "obsidian";
 import { FileDiff, DiffService } from "./DiffService";
-import { EditorSnapshot, isRecentLocalEdit } from "../utils/fileChangeDetection";
+import { EditorSnapshot, matchesEditorSnapshot } from "../utils/fileChangeDetection";
 
 export interface PendingDiff {
   file: TFile;
@@ -15,6 +15,7 @@ export class FileChangeDetector extends Component {
   private readonly pendingDiffs = new Map<string, PendingDiff>();
   private readonly aiModifiedPaths = new Set<string>();
   private readonly editorSnapshots = new Map<string, EditorSnapshot>();
+  private readonly locallyEditedPaths = new Set<string>();
   private changeHandler?: ChangeHandler;
   private isEnabled = true;
 
@@ -85,6 +86,7 @@ export class FileChangeDetector extends Component {
    */
   markAsSelfModified(path: string): void {
     this.aiModifiedPaths.add(path);
+    this.locallyEditedPaths.delete(path);
     // Remove from pending diffs if present
     this.pendingDiffs.delete(path);
   }
@@ -146,6 +148,7 @@ export class FileChangeDetector extends Component {
 
     try {
       this.recordEditorSnapshot(file.path, editor.getValue());
+      this.locallyEditedPaths.add(file.path);
     } catch (error) {
       console.error(`Failed to capture editor state for ${file.path}:`, error);
     }
@@ -155,7 +158,6 @@ export class FileChangeDetector extends Component {
     this.baselines.set(path, content);
     this.editorSnapshots.set(path, {
       content,
-      timestamp: Date.now(),
     });
   }
 
@@ -190,6 +192,7 @@ export class FileChangeDetector extends Component {
     // Skip if this was modified by the AI
     if (this.aiModifiedPaths.has(file.path)) {
       this.aiModifiedPaths.delete(file.path);
+      this.locallyEditedPaths.delete(file.path);
       return;
     }
 
@@ -199,7 +202,7 @@ export class FileChangeDetector extends Component {
       // No baseline yet, set it and return
       try {
         const content = await this.app.vault.read(file);
-        this.baselines.set(file.path, content);
+        this.recordEditorSnapshot(file.path, content);
       } catch (error) {
         console.error(`Failed to read file ${file.path}:`, error);
       }
@@ -215,8 +218,12 @@ export class FileChangeDetector extends Component {
       return;
     }
 
-    if (isRecentLocalEdit(currentContent, this.editorSnapshots.get(file.path))) {
+    if (
+      this.locallyEditedPaths.has(file.path) &&
+      matchesEditorSnapshot(currentContent, this.editorSnapshots.get(file.path))
+    ) {
       this.baselines.set(file.path, currentContent);
+      this.locallyEditedPaths.delete(file.path);
       return;
     }
 
