@@ -54,7 +54,7 @@ export class OpenRouterStrategy implements LLMStrategy {
     private readonly executeTool?: (toolName: string, args: unknown) => Promise<unknown>,
   ) {}
 
-  validateConfig(): string | null {
+  async validateConfig(): Promise<string | null> {
     if (!this.config.apiKey.trim()) {
       return "OpenRouter API key is missing. Set it in plugin settings.";
     }

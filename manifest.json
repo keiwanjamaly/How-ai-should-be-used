@@ -3,7 +3,7 @@
   "name": "Obsidian AI Chat",
   "version": "0.1.2",
   "minAppVersion": "1.6.0",
-  "description": "Chat with LLMs from a sidebar panel in Obsidian using OpenRouter.",
+  "description": "Chat with LLMs from a sidebar panel in Obsidian using OpenRouter or ChatGPT via Codex OAuth.",
   "author": "Keiwan Jamaly",
   "isDesktopOnly": true,
   "main": "main.js"

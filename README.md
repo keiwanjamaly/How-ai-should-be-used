@@ -8,6 +8,7 @@ This is an early desktop-only release intended for friends, testers, and anyone 
 
 - Chat from a sidebar view inside Obsidian
 - Use OpenRouter models with your own API key
+- Use ChatGPT without an API key through a local Codex OAuth login
 - Optionally include the active note as context in the conversation
 - Stream responses directly into the chat UI
 - Upload PDFs for OCR through the configured OpenRouter model
@@ -16,7 +17,9 @@ This is an early desktop-only release intended for friends, testers, and anyone 
 
 - Obsidian `1.6.0` or newer
 - Desktop only
-- An OpenRouter API key
+- Either:
+  - an OpenRouter API key
+  - or the local `codex` CLI signed in with ChatGPT (`codex login --device-auth`)
 
 ## Install with BRAT
 
@@ -55,18 +58,22 @@ styles.css
 ## Setup
 
 1. Open the plugin settings
-2. Paste your OpenRouter API key
-3. Choose a model
-4. Open the chat sidebar and start chatting
+2. Choose a provider:
+   - `OpenRouter (API key)` if you want to bring your own API key
+   - `ChatGPT via Codex OAuth` if you want to use a local ChatGPT/Codex login
+3. For OpenRouter, paste your API key and choose a model
+4. For ChatGPT/Codex, make sure `codex login --device-auth` has been completed on your machine
+5. Open the chat sidebar and start chatting
 
 ## Privacy and external services
 
-This plugin sends data to OpenRouter when you use it.
+This plugin sends data to the provider you select when you use it.
 
-- Your prompts are sent to OpenRouter
+- Your prompts are sent to OpenRouter or to OpenAI through the local Codex CLI, depending on the selected provider
 - If note context is enabled, the active note content is sent with your request
 - If you use PDF upload, the selected PDF is sent to OpenRouter for OCR/extraction
-- API keys and chat session data are stored in the plugin data inside your vault's Obsidian config
+- OpenRouter API keys and chat session data are stored in the plugin data inside your vault's Obsidian config
+- ChatGPT/Codex mode does not store an API key in the plugin; it relies on your local Codex login instead
 
 Only use the plugin with data you are comfortable sending to the configured external service.
 

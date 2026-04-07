@@ -1,4 +1,4 @@
-import { App, PluginSettingTab, Setting, Platform } from "obsidian";
+import { App, Notice, Platform, PluginSettingTab, Setting } from "obsidian";
 import type ObsidianAIChatPlugin from "./main";
 import {
   formatMCPServers,
@@ -7,6 +7,7 @@ import {
 } from "./types/mcp";
 import { MCPService } from "./services/MCPService";
 import { DEFAULT_SETTINGS } from "./types";
+import { getCodexLoginStatus } from "./services/CodexCli";
 
 export class ObsidianAIChatSettingTab extends PluginSettingTab {
   constructor(app: App, private readonly plugin: ObsidianAIChatPlugin) {
@@ -19,6 +20,48 @@ export class ObsidianAIChatSettingTab extends PluginSettingTab {
 
     containerEl.createEl("h2", { text: "Obsidian AI Chat settings" });
 
+    new Setting(containerEl)
+      .setName("Chat provider")
+      .setDesc("Choose how the chat panel authenticates and sends requests.")
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("openrouter", "OpenRouter (API key)")
+          .addOption("chatgpt", "ChatGPT via Codex OAuth")
+          .setValue(this.plugin.settings.provider)
+          .onChange(async (value) => {
+            this.plugin.settings.provider = value as "openrouter" | "chatgpt";
+            await this.plugin.saveSettings();
+            this.display();
+          }),
+      );
+
+    if (this.plugin.settings.provider === "chatgpt") {
+      this.displayChatGPTSettings(containerEl);
+    } else {
+      this.displayOpenRouterSettings(containerEl);
+    }
+
+    new Setting(containerEl)
+      .setName("System prompt")
+      .setDesc("Optional default system prompt added before each chat request.")
+      .addTextArea((text) => {
+        text
+          .setPlaceholder("You are a helpful assistant.")
+          .setValue(this.plugin.settings.systemPrompt)
+          .onChange(async (value) => {
+            this.plugin.settings.systemPrompt = value;
+            await this.plugin.saveSettings();
+          });
+
+        text.inputEl.rows = 6;
+        text.inputEl.addClass("oa-settings-textarea");
+      });
+
+    // MCP Settings Section
+    this.displayMCPSettings(containerEl);
+  }
+
+  private displayOpenRouterSettings(containerEl: HTMLElement): void {
     new Setting(containerEl)
       .setName("OpenRouter API key")
       .setDesc("Used to authenticate requests to OpenRouter.")
@@ -79,25 +122,99 @@ export class ObsidianAIChatSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           }),
       );
+  }
+
+  private displayChatGPTSettings(containerEl: HTMLElement): void {
+    containerEl.createEl("p", {
+      text: "This mode uses your local Codex CLI login, which can sign in with ChatGPT via device auth. No API key is stored in the plugin.",
+      cls: "oa-settings-desc",
+    });
 
     new Setting(containerEl)
-      .setName("System prompt")
-      .setDesc("Optional default system prompt added before each chat request.")
-      .addTextArea((text) => {
+      .setName("Codex CLI path")
+      .setDesc("Path to the local Codex CLI binary used for ChatGPT OAuth-backed requests.")
+      .addText((text) =>
         text
-          .setPlaceholder("You are a helpful assistant.")
-          .setValue(this.plugin.settings.systemPrompt)
+          .setPlaceholder("codex")
+          .setValue(this.plugin.settings.chatgpt.cliPath)
           .onChange(async (value) => {
-            this.plugin.settings.systemPrompt = value;
+            this.plugin.settings.chatgpt.cliPath = value.trim() || "codex";
             await this.plugin.saveSettings();
-          });
+          }),
+      );
 
-        text.inputEl.rows = 6;
-        text.inputEl.addClass("oa-settings-textarea");
-      });
+    new Setting(containerEl)
+      .setName("Default Codex model")
+      .setDesc("The model preselected in the chat header dropdown.")
+      .addText((text) =>
+        text
+          .setPlaceholder("gpt-5")
+          .setValue(this.plugin.settings.chatgpt.model)
+          .onChange(async (value) => {
+            this.plugin.settings.chatgpt.model = value.trim() || DEFAULT_SETTINGS.chatgpt.model;
+            await this.plugin.saveSettings();
+          }),
+      );
 
-    // MCP Settings Section
-    this.displayMCPSettings(containerEl);
+    const modelsStatusEl = containerEl.createEl("p", {
+      text: `Available Codex models: ${this.plugin.getSelectableModels().join(", ") || "none cached yet"}`,
+      cls: "oa-settings-desc",
+    });
+
+    new Setting(containerEl)
+      .setName("Available Codex models")
+      .setDesc("Fetched from the same Codex backend models endpoint used by the CLI.")
+      .addButton((btn) =>
+        btn.setButtonText("Refresh models").onClick(async () => {
+          btn.setDisabled(true);
+          modelsStatusEl.setText("Refreshing Codex models…");
+          try {
+            const models = await this.plugin.refreshCodexModels(true);
+            modelsStatusEl.setText(`Available Codex models: ${models.join(", ") || "none"}`);
+            this.display();
+          } catch (error) {
+            modelsStatusEl.setText(error instanceof Error ? error.message : String(error));
+          } finally {
+            btn.setDisabled(false);
+          }
+        }),
+      );
+
+    const statusEl = containerEl.createEl("p", {
+      text: "Use `codex login --device-auth` in a terminal if you have not signed in yet.",
+      cls: "oa-settings-desc",
+    });
+
+    new Setting(containerEl)
+      .setName("Codex login status")
+      .setDesc("Checks whether the local Codex CLI is already authenticated.")
+      .addButton((btn) =>
+        btn.setButtonText("Check status").onClick(async () => {
+          btn.setDisabled(true);
+          statusEl.setText("Checking Codex login status…");
+
+          try {
+            const status = await getCodexLoginStatus(this.plugin.settings.chatgpt.cliPath);
+            statusEl.setText(status.summary);
+          } catch (error) {
+            statusEl.setText(error instanceof Error ? error.message : String(error));
+          } finally {
+            btn.setDisabled(false);
+          }
+        }),
+      )
+      .addButton((btn) =>
+        btn.setButtonText("Copy login command").onClick(async () => {
+          const command = `${this.plugin.settings.chatgpt.cliPath || "codex"} login --device-auth`;
+          await navigator.clipboard.writeText(command);
+          new Notice("Copied Codex login command to clipboard.");
+        }),
+      );
+
+    containerEl.createEl("p", {
+      text: "Plugin-managed MCP tools and PDF OCR remain OpenRouter-only for now.",
+      cls: "oa-settings-desc",
+    });
   }
 
   /**

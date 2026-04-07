@@ -37,6 +37,14 @@ export interface OpenRouterSettings {
   model: string;
 }
 
+export type AIProvider = "openrouter" | "chatgpt";
+
+export interface ChatGPTSettings {
+  cliPath: string;
+  model: string;
+  favoriteModels: string[];
+}
+
 export interface ChatSession {
   id: string;
   title: string;
@@ -45,7 +53,9 @@ export interface ChatSession {
 }
 
 export interface ObsidianAIChatSettings {
+  provider: AIProvider;
   openRouter: OpenRouterSettings;
+  chatgpt: ChatGPTSettings;
   systemPrompt: string;
   mcp: MCPSettings;
   chatSessions: ChatSession[];
@@ -55,9 +65,15 @@ export interface ObsidianAIChatSettings {
 }
 
 export const DEFAULT_SETTINGS: ObsidianAIChatSettings = {
+  provider: "openrouter",
   openRouter: {
     apiKey: "",
     model: "openai/gpt-4o-mini",
+  },
+  chatgpt: {
+    cliPath: "codex",
+    model: "gpt-5",
+    favoriteModels: ["gpt-5", "gpt-5-mini"],
   },
   systemPrompt: "",
   mcp: DEFAULT_MCP_SETTINGS,

@@ -1,9 +1,15 @@
 import { Plugin, TFile, Notice, Platform } from "obsidian";
 import { ObsidianAIChatSettingTab } from "./settings";
 import { OpenRouterStrategy } from "./strategies/OpenRouterStrategy";
+import { CodexCliStrategy } from "./strategies/CodexCliStrategy";
 import type { LLMStrategy } from "./strategies/LLMStrategy";
 import { CHAT_VIEW_TYPE, ChatView } from "./views/ChatView";
-import { DEFAULT_SETTINGS, type ObsidianAIChatSettings, type OpenRouterSettings } from "./types";
+import {
+  DEFAULT_SETTINGS,
+  type AIProvider,
+  type ObsidianAIChatSettings,
+  type OpenRouterSettings,
+} from "./types";
 import { FileChangeDetector } from "./services/FileChangeDetector";
 import { DiffService } from "./services/DiffService";
 import { MCPService } from "./services/MCPService";
@@ -11,12 +17,14 @@ import { DiffModal, ChangeNotificationModal } from "./components/DiffModal";
 import { handleDiffResult } from "./utils/diffResultHandler";
 import { formatErrorMessage } from "./utils/errorUtils";
 import { mergeMCPServers } from "./types/mcp";
+import { fetchCodexAvailableModels } from "./services/CodexModels";
 
 export default class ObsidianAIChatPlugin extends Plugin {
   settings!: ObsidianAIChatSettings;
   fileChangeDetector!: FileChangeDetector;
   diffService!: DiffService;
   mcpService!: MCPService;
+  private codexModelsRefreshPromise: Promise<string[]> | null = null;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -37,6 +45,7 @@ export default class ObsidianAIChatPlugin extends Plugin {
 
     // Initialize MCP servers if enabled
     await this.initializeMCP();
+    void this.refreshCodexModels(false);
 
     // Register views
     this.registerView(CHAT_VIEW_TYPE, (leaf) => new ChatView(leaf, this));
@@ -89,6 +98,13 @@ export default class ObsidianAIChatPlugin extends Plugin {
   }
 
   createStrategy(modelOverride?: string): LLMStrategy {
+    if (this.settings.provider === "chatgpt") {
+      const config = modelOverride
+        ? { ...this.settings.chatgpt, model: modelOverride }
+        : this.settings.chatgpt;
+      return new CodexCliStrategy(config);
+    }
+
     const mcpTools = this.mcpService?.getAvailableTools(this.settings.mcp.enabledTools) ?? [];
     const executeTool = this.mcpService
       ? async (toolName: string, args: unknown) => this.mcpService.executeTool(toolName, args)
@@ -97,6 +113,73 @@ export default class ObsidianAIChatPlugin extends Plugin {
       ? { ...this.settings.openRouter, model: modelOverride }
       : this.settings.openRouter;
     return new OpenRouterStrategy(config, mcpTools, executeTool);
+  }
+
+  getActiveProvider(): AIProvider {
+    return this.settings.provider;
+  }
+
+  getDefaultModel(): string {
+    if (this.settings.provider === "chatgpt") {
+      return this.settings.chatgpt.model.trim() || this.settings.chatgpt.favoriteModels[0] || "";
+    }
+
+    return this.settings.openRouter.model;
+  }
+
+  getSelectableModels(): string[] {
+    if (this.settings.provider === "chatgpt") {
+      return this.settings.chatgpt.favoriteModels.length > 0
+        ? this.settings.chatgpt.favoriteModels
+        : DEFAULT_SETTINGS.chatgpt.favoriteModels;
+    }
+
+    return this.settings.favoriteModels;
+  }
+
+  supportsModelSelection(): boolean {
+    return true;
+  }
+
+  supportsPDFUpload(): boolean {
+    return this.settings.provider === "openrouter";
+  }
+
+  async refreshCodexModels(force: boolean): Promise<string[]> {
+    if (!force && this.codexModelsRefreshPromise) {
+      return this.codexModelsRefreshPromise;
+    }
+
+    const refreshPromise = (async () => {
+      try {
+        const result = await fetchCodexAvailableModels(this.settings.chatgpt.cliPath);
+        const models = result.models;
+        if (models.length === 0) {
+          return this.getSelectableModels();
+        }
+
+        const modelsChanged =
+          JSON.stringify(models) !== JSON.stringify(this.settings.chatgpt.favoriteModels);
+        const selectedModelValid = models.includes(this.settings.chatgpt.model);
+
+        if (modelsChanged || !selectedModelValid) {
+          this.settings.chatgpt.favoriteModels = models;
+          if (!selectedModelValid) {
+            this.settings.chatgpt.model = models[0];
+          }
+          await this.saveSettings();
+        }
+
+        return models;
+      } catch {
+        return this.getSelectableModels();
+      } finally {
+        this.codexModelsRefreshPromise = null;
+      }
+    })();
+
+    this.codexModelsRefreshPromise = refreshPromise;
+    return refreshPromise;
   }
 
   /**
@@ -142,9 +225,14 @@ export default class ObsidianAIChatPlugin extends Plugin {
         ...DEFAULT_SETTINGS.openRouter,
         ...loaded?.openRouter,
       },
+      chatgpt: {
+        ...DEFAULT_SETTINGS.chatgpt,
+        ...loaded?.chatgpt,
+      },
       chatSessions: loaded?.chatSessions ?? DEFAULT_SETTINGS.chatSessions,
       activeSessionId: loaded?.activeSessionId ?? DEFAULT_SETTINGS.activeSessionId,
       favoriteModels: loaded?.favoriteModels ?? DEFAULT_SETTINGS.favoriteModels,
+      ocrModel: loaded?.ocrModel ?? DEFAULT_SETTINGS.ocrModel,
     };
   }
 

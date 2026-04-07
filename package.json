@@ -1,13 +1,13 @@
 {
   "name": "obsidian-ai-chat",
   "version": "0.1.2",
-  "description": "Chat with LLMs from a sidebar panel in Obsidian using OpenRouter.",
+  "description": "Chat with LLMs from a sidebar panel in Obsidian using OpenRouter or ChatGPT via Codex OAuth.",
   "main": "main.js",
   "scripts": {
     "build": "node esbuild.config.mjs production",
     "dev": "node esbuild.config.mjs",
     "check": "tsc -p tsconfig.json --noEmit",
-    "test": "npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/DiffService.test.ts && npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/mcp.test.ts && npx ts-node src/__tests__/FileChangeParser.test.ts",
+    "test": "npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/DiffService.test.ts && npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/mcp.test.ts && npx ts-node src/__tests__/FileChangeParser.test.ts && npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/CodexCli.test.ts && npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/CodexModels.test.ts && npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/fileChangeDetection.test.ts",
     "release:prepare": "node scripts/prepare-release.mjs",
     "deploy": "npm run build && mkdir -p \"${OBSIDIAN_PLUGIN_PATH:?Set OBSIDIAN_PLUGIN_PATH}\" && cp main.js manifest.json styles.css \"$OBSIDIAN_PLUGIN_PATH\""
   },

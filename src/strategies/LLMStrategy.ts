@@ -17,5 +17,5 @@ export interface LLMStrategy {
     onMCPCall?: (call: MCPCallEvent) => void,
     signal?: AbortSignal,
   ): Promise<string>;
-  validateConfig(): string | null;
+  validateConfig(signal?: AbortSignal): Promise<string | null>;
 }

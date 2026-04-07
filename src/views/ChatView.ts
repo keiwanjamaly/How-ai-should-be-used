@@ -70,7 +70,7 @@ export class ChatView extends ItemView {
 
     const headerActions = header.createDiv({ cls: "oa-chat-header-actions" });
 
-    this.selectedModel = this.plugin.settings.openRouter.model;
+    this.selectedModel = this.plugin.getDefaultModel();
 
     this.modelSelectorEl = headerActions.createEl("select", {
       cls: "oa-chat-model-selector",
@@ -171,6 +171,7 @@ export class ChatView extends ItemView {
     setIcon(this.sendButtonEl, "send-horizontal");
     this.sendButtonEl.addEventListener("click", () => { void this.handleSend(); });
 
+    this.updateProviderControls();
     this.updateBusyState(false);
 
     // Listen for active file changes
@@ -181,6 +182,7 @@ export class ChatView extends ItemView {
     );
 
     this.restoreLastSession();
+    await this.refreshProviderModels();
   }
 
   async onClose(): Promise<void> {
@@ -202,10 +204,10 @@ export class ChatView extends ItemView {
   }
 
   private refreshModelSelector(): void {
-    const current = this.selectedModel || this.plugin.settings.openRouter.model;
+    const current = this.selectedModel || this.plugin.getDefaultModel();
     this.modelSelectorEl.empty();
 
-    const models = this.plugin.settings.favoriteModels;
+    const models = this.plugin.getSelectableModels();
     const allModels = models.includes(current) ? models : [current, ...models];
 
     for (const model of allModels) {
@@ -216,6 +218,33 @@ export class ChatView extends ItemView {
       if (model === current) opt.selected = true;
     }
     this.selectedModel = current;
+  }
+
+  private updateProviderControls(): void {
+    this.modelSelectorEl.toggleClass("oa-hidden", !this.plugin.supportsModelSelection());
+    this.refreshModelSelector();
+
+    const supportsPDFUpload = this.plugin.supportsPDFUpload();
+    this.pdfUploadBtnEl.toggleClass("oa-hidden", !supportsPDFUpload);
+    if (!supportsPDFUpload) {
+      this.pdfExtractedText = null;
+      this.pdfFilename = null;
+      this.updatePDFBadge();
+    }
+  }
+
+  private async refreshProviderModels(): Promise<void> {
+    if (this.plugin.getActiveProvider() !== "chatgpt") {
+      this.refreshModelSelector();
+      return;
+    }
+
+    const previousSelection = this.selectedModel;
+    const models = await this.plugin.refreshCodexModels(false);
+    if (!models.includes(previousSelection)) {
+      this.selectedModel = this.plugin.getDefaultModel();
+    }
+    this.refreshModelSelector();
   }
 
   private getActiveFile(): TFile | null {
@@ -758,7 +787,7 @@ export class ChatView extends ItemView {
 
   private async sendUserMessage(userMessage: ChatMessage): Promise<void> {
     const strategy = this.plugin.createStrategy(this.selectedModel);
-    const configError = strategy.validateConfig();
+    const configError = await strategy.validateConfig();
     if (configError) {
       new Notice(configError);
       return;
@@ -803,6 +832,10 @@ export class ChatView extends ItemView {
   }
 
   private async performOCR(file: File): Promise<string> {
+    if (!this.plugin.supportsPDFUpload()) {
+      throw new Error("PDF OCR is only available when using the OpenRouter provider.");
+    }
+
     const buffer = await file.arrayBuffer();
 
     // Chunked base64 encoding to avoid stack overflow on large files
