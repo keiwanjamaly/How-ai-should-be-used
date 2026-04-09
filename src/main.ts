@@ -17,6 +17,7 @@ import { DiffModal, ChangeNotificationModal } from "./components/DiffModal";
 import { handleDiffResult } from "./utils/diffResultHandler";
 import { formatErrorMessage } from "./utils/errorUtils";
 import { mergeMCPServers } from "./types/mcp";
+import type { MCPServers } from "./types/mcp";
 import { fetchCodexAvailableModels } from "./services/CodexModels";
 
 export default class ObsidianAIChatPlugin extends Plugin {
@@ -24,6 +25,7 @@ export default class ObsidianAIChatPlugin extends Plugin {
   fileChangeDetector!: FileChangeDetector;
   diffService!: DiffService;
   mcpService!: MCPService;
+  private resolvedMCPServers: MCPServers = {};
   private codexModelsRefreshPromise: Promise<string[]> | null = null;
 
   async onload(): Promise<void> {
@@ -102,7 +104,8 @@ export default class ObsidianAIChatPlugin extends Plugin {
       const config = modelOverride
         ? { ...this.settings.chatgpt, model: modelOverride }
         : this.settings.chatgpt;
-      return new CodexCliStrategy(config);
+      const mcpServers = this.settings.mcp.enabled ? this.resolvedMCPServers : {};
+      return new CodexCliStrategy(config, mcpServers);
     }
 
     const mcpTools = this.mcpService?.getAvailableTools(this.settings.mcp.enabledTools) ?? [];
@@ -190,29 +193,38 @@ export default class ObsidianAIChatPlugin extends Plugin {
     if (!Platform.isMobile) {
       if (this.settings.mcp.enabled) {
         try {
-          // Load servers from config file if path is set
-          let fileServers = {};
-          if (this.settings.mcp.configFilePath) {
-            const config = await MCPService.loadConfigFromFile(this.settings.mcp.configFilePath);
-            if (config?.mcp) {
-              fileServers = config.mcp;
-            }
-          }
-
-          // Merge with custom MCPs
-          const allServers = mergeMCPServers(fileServers, this.settings.mcp.customMCPs);
+          const allServers = await this.resolveConfiguredMCPServers();
+          this.resolvedMCPServers = allServers;
 
           // Initialize the MCP service
           await this.mcpService.initialize(allServers);
         } catch (error) {
+          this.resolvedMCPServers = {};
           console.error("Failed to initialize MCP:", error);
           new Notice("Failed to initialize MCP servers. Check console for details.");
         }
       } else {
         // MCP is disabled, shutdown any running servers
+        this.resolvedMCPServers = {};
         await this.mcpService.shutdown();
       }
     }
+  }
+
+  private getConfiguredMCPServers(): MCPServers {
+    return mergeMCPServers(this.settings.mcp.customMCPs);
+  }
+
+  private async resolveConfiguredMCPServers(): Promise<MCPServers> {
+    let fileServers: MCPServers = {};
+    if (this.settings.mcp.configFilePath) {
+      const config = await MCPService.loadConfigFromFile(this.settings.mcp.configFilePath);
+      if (config?.mcp) {
+        fileServers = config.mcp;
+      }
+    }
+
+    return mergeMCPServers(fileServers, this.getConfiguredMCPServers());
   }
 
   async loadSettings(): Promise<void> {

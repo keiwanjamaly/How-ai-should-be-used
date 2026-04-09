@@ -4,6 +4,7 @@
  */
 
 import {
+  buildCodexMcpConfigOverrides,
   extractCodexMessage,
   parseCodexLoginStatus,
   resolveCodexCliPath,
@@ -47,10 +48,50 @@ function testResolveCodexCliPathFindsHomebrewInstall(): void {
   assertTrue(resolved.endsWith("/codex"), "Should resolve to a concrete executable path when available");
 }
 
+function testBuildCodexMcpConfigOverrides(): void {
+  const overrides = buildCodexMcpConfigOverrides({
+    filesystem: {
+      type: "local",
+      command: ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp/docs"],
+      enabled: true,
+      environment: {
+        NODE_ENV: "test",
+      },
+    },
+  });
+
+  assertEqual(overrides.length, 3, "Should create command, args, and env overrides");
+  assertEqual(overrides[0], 'mcp_servers.filesystem.command="npx"', "Should set command override");
+  assertEqual(
+    overrides[1],
+    'mcp_servers.filesystem.args=["-y", "@modelcontextprotocol/server-filesystem", "/tmp/docs"]',
+    "Should set args override",
+  );
+  assertEqual(
+    overrides[2],
+    'mcp_servers.filesystem.env.NODE_ENV="test"',
+    "Should set env overrides",
+  );
+}
+
+function testBuildCodexMcpConfigOverridesSkipsDisabledServers(): void {
+  const overrides = buildCodexMcpConfigOverrides({
+    disabled: {
+      type: "local",
+      command: ["npx", "ignored"],
+      enabled: false,
+    },
+  });
+
+  assertEqual(overrides.length, 0, "Should skip disabled servers");
+}
+
 runTests("Codex CLI helpers", [
   testParseCodexLoginStatusLoggedIn,
   testParseCodexLoginStatusNotLoggedIn,
   testExtractCodexMessage,
   testResolveCodexCliPathExpandsHome,
   testResolveCodexCliPathFindsHomebrewInstall,
+  testBuildCodexMcpConfigOverrides,
+  testBuildCodexMcpConfigOverridesSkipsDisabledServers,
 ]);

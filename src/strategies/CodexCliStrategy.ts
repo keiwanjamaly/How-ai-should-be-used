@@ -1,12 +1,16 @@
 import type { ChatGPTSettings, ChatMessage } from "../types";
 import type { MCPCallEvent } from "../types";
 import { getCodexLoginStatus, runCodexExec } from "../services/CodexCli";
+import type { MCPServers } from "../types/mcp";
 import type { LLMStrategy } from "./LLMStrategy";
 
 export class CodexCliStrategy implements LLMStrategy {
   public readonly name = "ChatGPT";
 
-  constructor(private readonly config: ChatGPTSettings) {}
+  constructor(
+    private readonly config: ChatGPTSettings,
+    private readonly mcpServers: MCPServers = {},
+  ) {}
 
   async validateConfig(signal?: AbortSignal): Promise<string | null> {
     if (!this.config.cliPath.trim()) {
@@ -36,6 +40,7 @@ export class CodexCliStrategy implements LLMStrategy {
       cliPath: this.config.cliPath,
       prompt,
       model: this.config.model,
+      mcpServers: this.mcpServers,
       signal,
     });
 

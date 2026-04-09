@@ -2,6 +2,7 @@ import { spawn } from "child_process";
 import { existsSync } from "fs";
 import { tmpdir } from "os";
 import { delimiter, join } from "path";
+import type { MCPServers } from "../types/mcp";
 
 const COMMON_CODEX_PATHS = [
   "/opt/homebrew/bin/codex",
@@ -24,6 +25,7 @@ export interface RunCodexExecOptions {
   cliPath: string;
   prompt: string;
   model?: string;
+  mcpServers?: MCPServers;
   signal?: AbortSignal;
 }
 
@@ -149,6 +151,36 @@ export function resolveCodexCliPath(cliPath: string): string {
   return expanded;
 }
 
+function tomlString(value: string): string {
+  return JSON.stringify(value);
+}
+
+function tomlStringArray(values: string[]): string {
+  return `[${values.map((value) => tomlString(value)).join(", ")}]`;
+}
+
+export function buildCodexMcpConfigOverrides(mcpServers: MCPServers): string[] {
+  const overrides: string[] = [];
+
+  for (const [serverName, server] of Object.entries(mcpServers)) {
+    if (!server.enabled || server.type !== "local" || server.command.length === 0) {
+      continue;
+    }
+
+    const [command, ...args] = server.command;
+    const baseKey = `mcp_servers.${serverName}`;
+
+    overrides.push(`${baseKey}.command=${tomlString(command)}`);
+    overrides.push(`${baseKey}.args=${tomlStringArray(args)}`);
+
+    for (const [envName, envValue] of Object.entries(server.environment ?? {})) {
+      overrides.push(`${baseKey}.env.${envName}=${tomlString(envValue)}`);
+    }
+  }
+
+  return overrides;
+}
+
 export async function runCodexCommand(
   cliPath: string,
   args: string[],
@@ -236,6 +268,7 @@ export async function runCodexExec({
   cliPath,
   prompt,
   model,
+  mcpServers = {},
   signal,
 }: RunCodexExecOptions): Promise<string> {
   const args = [
@@ -251,6 +284,10 @@ export async function runCodexExec({
 
   if (model?.trim()) {
     args.push("--model", model.trim());
+  }
+
+  for (const override of buildCodexMcpConfigOverrides(mcpServers)) {
+    args.push("-c", override);
   }
 
   args.push(prompt);
