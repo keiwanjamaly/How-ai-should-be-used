@@ -57,8 +57,83 @@ export class ObsidianAIChatSettingTab extends PluginSettingTab {
         text.inputEl.addClass("oa-settings-textarea");
       });
 
+    this.displayVaultRAGSettings(containerEl);
+
     // MCP Settings Section
     this.displayMCPSettings(containerEl);
+  }
+
+  private displayVaultRAGSettings(containerEl: HTMLElement): void {
+    containerEl.createEl("h3", { text: "Vault RAG", cls: "oa-settings-section" });
+
+    new Setting(containerEl)
+      .setName("Enable vault-wide retrieval")
+      .setDesc("Search markdown notes across the vault and send the most relevant snippets with each prompt.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.vaultRAG.enabled)
+          .onChange(async (value) => {
+            this.plugin.settings.vaultRAG.enabled = value;
+            await this.plugin.saveSettings();
+            await this.plugin.refreshVaultRAGIndex();
+            this.display();
+          }),
+      );
+
+    if (!this.plugin.settings.vaultRAG.enabled) {
+      return;
+    }
+
+    new Setting(containerEl)
+      .setName("Max retrieved snippets")
+      .setDesc("Upper bound for note snippets added to each request.")
+      .addText((text) =>
+        text
+          .setPlaceholder("6")
+          .setValue(String(this.plugin.settings.vaultRAG.maxChunks))
+          .onChange(async (value) => {
+            const parsed = Number.parseInt(value, 10);
+            this.plugin.settings.vaultRAG.maxChunks = Number.isFinite(parsed)
+              ? Math.max(1, Math.min(parsed, 12))
+              : DEFAULT_SETTINGS.vaultRAG.maxChunks;
+            await this.plugin.saveSettings();
+            await this.plugin.refreshVaultRAGIndex();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Chunk size")
+      .setDesc("Approximate characters per indexed note chunk.")
+      .addText((text) =>
+        text
+          .setPlaceholder("1200")
+          .setValue(String(this.plugin.settings.vaultRAG.chunkSize))
+          .onChange(async (value) => {
+            const parsed = Number.parseInt(value, 10);
+            this.plugin.settings.vaultRAG.chunkSize = Number.isFinite(parsed)
+              ? Math.max(300, Math.min(parsed, 4000))
+              : DEFAULT_SETTINGS.vaultRAG.chunkSize;
+            await this.plugin.saveSettings();
+            await this.plugin.refreshVaultRAGIndex();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Max note size")
+      .setDesc("Skip very large markdown files during retrieval to keep chat responsive.")
+      .addText((text) =>
+        text
+          .setPlaceholder("300")
+          .setValue(String(this.plugin.settings.vaultRAG.maxFileSizeKB))
+          .onChange(async (value) => {
+            const parsed = Number.parseInt(value, 10);
+            this.plugin.settings.vaultRAG.maxFileSizeKB = Number.isFinite(parsed)
+              ? Math.max(25, Math.min(parsed, 2048))
+              : DEFAULT_SETTINGS.vaultRAG.maxFileSizeKB;
+            await this.plugin.saveSettings();
+            await this.plugin.refreshVaultRAGIndex();
+          }),
+      );
   }
 
   private displayOpenRouterSettings(containerEl: HTMLElement): void {

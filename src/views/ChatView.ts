@@ -7,6 +7,7 @@ import type { FileDiff } from "../services/DiffService";
 import { DiffModal } from "../components/DiffModal";
 import { handleDiffResult } from "../utils/diffResultHandler";
 import { formatErrorMessage } from "../utils/errorUtils";
+import type { VaultChunk } from "../services/VaultRAGService";
 
 export const CHAT_VIEW_TYPE = "obsidian-ai-chat-view";
 
@@ -19,6 +20,7 @@ export class ChatView extends ItemView {
   private newChatButtonEl!: HTMLButtonElement;
   private contextToggleEl!: HTMLButtonElement;
   private contextBadgeEl!: HTMLDivElement;
+  private ragBadgeEl!: HTMLDivElement;
   private sessionSelectorEl!: HTMLSelectElement;
   private currentSessionId: string | null = null;
   private pdfExtractedText: string | null = null;
@@ -36,6 +38,7 @@ export class ChatView extends ItemView {
   private messageWrappers = new Map<ChatMessage, HTMLDivElement>();
   private messageCleanupMap = new Map<ChatMessage, () => void>();
   private messageRenderState = new WeakMap<HTMLDivElement, { rendering: boolean; pending: boolean; message: ChatMessage }>();
+  private lastRetrievedChunks: VaultChunk[] = [];
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -118,6 +121,9 @@ export class ChatView extends ItemView {
 
     this.contextBadgeEl = badgesRow.createDiv({ cls: "oa-chat-context-badge" });
     this.updateContextBadge();
+
+    this.ragBadgeEl = badgesRow.createDiv({ cls: "oa-chat-rag-badge" });
+    this.updateRAGBadge();
 
     this.pdfBadgeEl = badgesRow.createDiv({ cls: "oa-chat-pdf-badge" });
     this.pdfBadgeEl.hide();
@@ -271,6 +277,30 @@ export class ChatView extends ItemView {
     }
   }
 
+  private updateRAGBadge(): void {
+    this.ragBadgeEl.empty();
+
+    if (!this.plugin.settings.vaultRAG.enabled) {
+      this.ragBadgeEl.hide();
+      return;
+    }
+
+    const badgeIcon = this.ragBadgeEl.createSpan({ cls: "oa-chat-rag-badge-icon" });
+    setIcon(badgeIcon, "library");
+    this.ragBadgeEl.createSpan({
+      text: this.lastRetrievedChunks.length > 0
+        ? `Vault RAG (${this.lastRetrievedChunks.length})`
+        : "Vault RAG",
+    });
+    this.ragBadgeEl.setAttr(
+      "title",
+      this.lastRetrievedChunks.length > 0
+        ? this.lastRetrievedChunks.map((chunk) => chunk.path).join("\n")
+        : "Vault-wide retrieval is enabled for markdown notes.",
+    );
+    this.ragBadgeEl.show();
+  }
+
   private async buildFileContextMessage(): Promise<ChatMessage | null> {
     if (!this.includeFileContext) {
       return null;
@@ -293,6 +323,39 @@ export class ChatView extends ItemView {
       console.error("Failed to read active file:", error);
       return null;
     }
+  }
+
+  private async buildVaultContextMessage(query: string): Promise<ChatMessage | null> {
+    const chunks = await this.plugin.vaultRAGService.retrieveRelevantChunks(
+      query,
+      this.plugin.settings.vaultRAG,
+      this.getActiveFile()?.path,
+    );
+
+    this.lastRetrievedChunks = chunks;
+    this.updateRAGBadge();
+
+    if (chunks.length === 0) {
+      return null;
+    }
+
+    const formattedChunks = chunks.map((chunk, index) => [
+      `Snippet ${index + 1}`,
+      `Path: ${chunk.path}`,
+      `Title: ${chunk.title}`,
+      chunk.content,
+    ].join("\n")).join("\n\n---\n\n");
+
+    return {
+      role: ChatRole.System,
+      content: [
+        "Use the following retrieved vault snippets as optional grounding context.",
+        "Prefer them when they are relevant, and cite note paths naturally when you rely on them.",
+        "---",
+        formattedChunks,
+        "---",
+      ].join("\n"),
+    };
   }
 
   private updateBusyState(isBusy: boolean): void {
@@ -711,7 +774,7 @@ export class ChatView extends ItemView {
   /**
    * Builds the request messages array for the LLM, prepending the system prompt and active file context if available.
    */
-  private async buildRequestMessages(): Promise<ChatMessage[]> {
+  private async buildRequestMessages(userQuery: string): Promise<ChatMessage[]> {
     const requestMessages: ChatMessage[] = [];
 
     const systemPrompt = this.plugin.settings.systemPrompt.trim();
@@ -725,6 +788,11 @@ export class ChatView extends ItemView {
     const fileContext = await this.buildFileContextMessage();
     if (fileContext) {
       requestMessages.push(fileContext);
+    }
+
+    const vaultContext = await this.buildVaultContextMessage(userQuery);
+    if (vaultContext) {
+      requestMessages.push(vaultContext);
     }
 
     if (this.pdfExtractedText && this.pdfFilename) {
@@ -798,7 +866,7 @@ export class ChatView extends ItemView {
 
     let requestMessages: ChatMessage[];
     try {
-      requestMessages = await this.buildRequestMessages();
+      requestMessages = await this.buildRequestMessages(userMessage.content);
     } catch (error) {
       new Notice(`Failed to build request: ${formatErrorMessage(error)}`);
       return;

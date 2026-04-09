@@ -45,6 +45,13 @@ export interface ChatGPTSettings {
   favoriteModels: string[];
 }
 
+export interface VaultRAGSettings {
+  enabled: boolean;
+  maxChunks: number;
+  chunkSize: number;
+  maxFileSizeKB: number;
+}
+
 export interface ChatSession {
   id: string;
   title: string;
@@ -56,6 +63,7 @@ export interface ObsidianAIChatSettings {
   provider: AIProvider;
   openRouter: OpenRouterSettings;
   chatgpt: ChatGPTSettings;
+  vaultRAG: VaultRAGSettings;
   systemPrompt: string;
   mcp: MCPSettings;
   chatSessions: ChatSession[];
@@ -74,6 +82,12 @@ export const DEFAULT_SETTINGS: ObsidianAIChatSettings = {
     cliPath: "codex",
     model: "gpt-5",
     favoriteModels: ["gpt-5", "gpt-5-mini"],
+  },
+  vaultRAG: {
+    enabled: false,
+    maxChunks: 6,
+    chunkSize: 1200,
+    maxFileSizeKB: 300,
   },
   systemPrompt: "",
   mcp: DEFAULT_MCP_SETTINGS,

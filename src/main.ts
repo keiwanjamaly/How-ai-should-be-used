@@ -13,18 +13,22 @@ import {
 import { FileChangeDetector } from "./services/FileChangeDetector";
 import { DiffService } from "./services/DiffService";
 import { MCPService } from "./services/MCPService";
+import { VaultRAGService } from "./services/VaultRAGService";
 import { DiffModal, ChangeNotificationModal } from "./components/DiffModal";
 import { handleDiffResult } from "./utils/diffResultHandler";
 import { formatErrorMessage } from "./utils/errorUtils";
 import { mergeMCPServers } from "./types/mcp";
 import type { MCPServers } from "./types/mcp";
 import { fetchCodexAvailableModels } from "./services/CodexModels";
+import type { VaultRAGIndexStatus } from "./services/VaultRAGService";
 
 export default class ObsidianAIChatPlugin extends Plugin {
   settings!: ObsidianAIChatSettings;
   fileChangeDetector!: FileChangeDetector;
   diffService!: DiffService;
   mcpService!: MCPService;
+  vaultRAGService!: VaultRAGService;
+  private vaultRAGStatusEl!: HTMLElement;
   private resolvedMCPServers: MCPServers = {};
   private codexModelsRefreshPromise: Promise<string[]> | null = null;
 
@@ -35,11 +39,55 @@ export default class ObsidianAIChatPlugin extends Plugin {
     this.diffService = new DiffService(this.app);
     this.fileChangeDetector = new FileChangeDetector(this.app, this.diffService);
     this.mcpService = new MCPService();
+    this.vaultRAGService = new VaultRAGService(this.app);
+    this.vaultRAGStatusEl = this.addStatusBarItem();
+    this.vaultRAGStatusEl.addClass("oa-rag-status");
+    this.register(() => this.vaultRAGStatusEl.remove());
+    this.register(this.vaultRAGService.onStatusChange((status) => {
+      this.updateVaultRAGStatusBar(status);
+    }));
+    this.vaultRAGService.refreshStatus(this.settings.vaultRAG, false);
     
     // Set up change detection
     this.fileChangeDetector.onChange((pendingDiff) => {
       this.handleExternalChange(pendingDiff);
     });
+
+    this.registerEvent(this.app.vault.on("create", (file) => {
+      if (!(file instanceof TFile)) {
+        return;
+      }
+      this.vaultRAGService.invalidateFile(file.path);
+      this.vaultRAGService.refreshStatus(this.settings.vaultRAG, false);
+      if (this.settings.vaultRAG.enabled && file.extension === "md") {
+        void this.vaultRAGService.indexFile(file, this.settings.vaultRAG);
+      }
+    }));
+
+    this.registerEvent(this.app.vault.on("modify", (file) => {
+      if (!(file instanceof TFile)) {
+        return;
+      }
+      this.vaultRAGService.invalidateFile(file.path);
+      this.vaultRAGService.refreshStatus(this.settings.vaultRAG, false);
+      if (this.settings.vaultRAG.enabled && file.extension === "md") {
+        void this.vaultRAGService.indexFile(file, this.settings.vaultRAG);
+      }
+    }));
+
+    this.registerEvent(this.app.vault.on("delete", (file) => {
+      this.vaultRAGService.invalidateFile(file.path);
+      this.vaultRAGService.refreshStatus(this.settings.vaultRAG, false);
+    }));
+
+    this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
+      this.vaultRAGService.invalidateFile(oldPath);
+      this.vaultRAGService.invalidateFile(file.path);
+      this.vaultRAGService.refreshStatus(this.settings.vaultRAG, false);
+      if (this.settings.vaultRAG.enabled && file instanceof TFile && file.extension === "md") {
+        void this.vaultRAGService.indexFile(file, this.settings.vaultRAG);
+      }
+    }));
     
     // Register the file change detector as a component
     this.addChild(this.fileChangeDetector);
@@ -90,6 +138,7 @@ export default class ObsidianAIChatPlugin extends Plugin {
     }).toggleClass("oa-hidden", true); // Initially hidden
 
     this.app.workspace.onLayoutReady(() => {
+      void this.refreshVaultRAGIndex();
       void this.activateView();
     });
   }
@@ -146,6 +195,15 @@ export default class ObsidianAIChatPlugin extends Plugin {
 
   supportsPDFUpload(): boolean {
     return this.settings.provider === "openrouter";
+  }
+
+  async refreshVaultRAGIndex(): Promise<void> {
+    this.vaultRAGService.refreshStatus(this.settings.vaultRAG, false);
+    if (!this.settings.vaultRAG.enabled) {
+      return;
+    }
+
+    await this.vaultRAGService.warmIndex(this.settings.vaultRAG);
   }
 
   async refreshCodexModels(force: boolean): Promise<string[]> {
@@ -241,6 +299,10 @@ export default class ObsidianAIChatPlugin extends Plugin {
         ...DEFAULT_SETTINGS.chatgpt,
         ...loaded?.chatgpt,
       },
+      vaultRAG: {
+        ...DEFAULT_SETTINGS.vaultRAG,
+        ...loaded?.vaultRAG,
+      },
       chatSessions: loaded?.chatSessions ?? DEFAULT_SETTINGS.chatSessions,
       activeSessionId: loaded?.activeSessionId ?? DEFAULT_SETTINGS.activeSessionId,
       favoriteModels: loaded?.favoriteModels ?? DEFAULT_SETTINGS.favoriteModels,
@@ -250,6 +312,34 @@ export default class ObsidianAIChatPlugin extends Plugin {
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
+  }
+
+  private updateVaultRAGStatusBar(status: VaultRAGIndexStatus): void {
+    if (!status.enabled) {
+      this.vaultRAGStatusEl.setText("RAG off");
+      this.vaultRAGStatusEl.setAttr("aria-label", "Vault RAG is disabled");
+      this.vaultRAGStatusEl.setAttr("title", "Vault-wide retrieval is disabled.");
+      return;
+    }
+
+    const eligible = status.eligibleFiles;
+    const indexed = Math.min(status.indexedFiles, eligible);
+    const percent = eligible > 0 ? Math.round((indexed / eligible) * 100) : 100;
+    const prefix = status.isIndexing ? "RAG indexing" : "RAG";
+
+    this.vaultRAGStatusEl.setText(`${prefix} ${indexed}/${eligible} (${percent}%)`);
+    this.vaultRAGStatusEl.setAttr(
+      "aria-label",
+      `Vault RAG indexed ${indexed} of ${eligible} eligible markdown notes`,
+    );
+    this.vaultRAGStatusEl.setAttr(
+      "title",
+      [
+        `${indexed} of ${eligible} eligible markdown notes are indexed for vault chat.`,
+        `${status.skippedFiles} notes are currently skipped because they exceed the configured size limit.`,
+        status.isIndexing ? "Background indexing is still running." : "Background indexing is idle.",
+      ].join("\n"),
+    );
   }
 
   async activateView(): Promise<void> {

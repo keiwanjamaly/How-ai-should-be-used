@@ -316,6 +316,28 @@
   height: 12px;
 }
 
+.oa-chat-rag-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--text-normal);
+  padding: 2px 8px 2px 6px;
+  background: color-mix(in srgb, var(--color-green, #2e8b57) 12%, var(--background-secondary));
+  border: 1px solid color-mix(in srgb, var(--color-green, #2e8b57) 30%, transparent);
+  border-radius: 999px;
+}
+
+.oa-chat-rag-badge .svg-icon {
+  width: 12px;
+  height: 12px;
+  color: var(--color-green, #2e8b57);
+}
+
+.oa-rag-status {
+  font-variant-numeric: tabular-nums;
+}
+
 .oa-chat-composer-inner {
   position: relative;
   border: 1px solid var(--background-modifier-border);
