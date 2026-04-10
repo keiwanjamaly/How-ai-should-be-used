@@ -31,6 +31,21 @@ export interface CodexModelsResult {
   source: "remote" | "cache";
 }
 
+async function getRequestUrl(): Promise<(request: {
+  url: string;
+  method?: string;
+  headers?: Record<string, string>;
+  throw?: boolean;
+}) => Promise<{ status: number; json: unknown }>> {
+  const obsidian = await import("obsidian");
+  return obsidian.requestUrl as (request: {
+    url: string;
+    method?: string;
+    headers?: Record<string, string>;
+    throw?: boolean;
+  }) => Promise<{ status: number; json: unknown }>;
+}
+
 function getCodexHome(): string {
   return join(homedir(), ".codex");
 }
@@ -147,23 +162,23 @@ export async function fetchCodexAvailableModels(cliPath: string): Promise<CodexM
     }
 
     const clientVersion = await getCodexClientVersion(cliPath);
-    const response = await fetch(
-      `https://chatgpt.com/backend-api/codex/models?client_version=${encodeURIComponent(clientVersion)}`,
-      {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "ChatGPT-Account-ID": accountId,
-          Accept: "application/json",
-        },
+    const requestUrl = await getRequestUrl();
+    const response = await requestUrl({
+      url: `https://chatgpt.com/backend-api/codex/models?client_version=${encodeURIComponent(clientVersion)}`,
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "ChatGPT-Account-ID": accountId,
+        Accept: "application/json",
       },
-    );
+      throw: false,
+    });
 
-    if (!response.ok) {
+    if (response.status < 200 || response.status >= 300) {
       throw new Error(`Codex models request failed (${response.status})`);
     }
 
-    const json = (await response.json()) as { models?: CodexRemoteModel[] };
+    const json = response.json as { models?: CodexRemoteModel[] };
     const models = extractCodexPickerModels(json.models ?? []);
     if (models.length === 0) {
       throw new Error("Codex models endpoint returned no picker-visible models.");

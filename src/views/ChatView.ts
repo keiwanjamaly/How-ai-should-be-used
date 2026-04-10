@@ -328,7 +328,6 @@ export class ChatView extends ItemView {
   private async buildVaultContextMessage(query: string): Promise<ChatMessage | null> {
     const chunks = await this.plugin.vaultRAGService.retrieveRelevantChunks(
       query,
-      this.plugin.settings.vaultRAG,
       this.getActiveFile()?.path,
     );
 

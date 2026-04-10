@@ -10,7 +10,7 @@ This is an early desktop-only release intended for friends, testers, and anyone 
 - Use OpenRouter models with your own API key
 - Use ChatGPT without an API key through a local Codex OAuth login
 - Optionally include the active note as context in the conversation
-- Optionally retrieve relevant snippets from markdown notes across the vault
+- Optionally retrieve relevant snippets from a persistent embedded vault index
 - See vault RAG indexing coverage in the Obsidian status bar
 - Stream responses directly into the chat UI
 - Upload PDFs for OCR through the configured OpenRouter model
@@ -65,7 +65,8 @@ styles.css
    - `ChatGPT via Codex OAuth` if you want to use a local ChatGPT/Codex login
 3. For OpenRouter, paste your API key and choose a model
 4. For ChatGPT/Codex, make sure `codex login --device-auth` has been completed on your machine
-5. Open the chat sidebar and start chatting
+5. If you enable vault embeddings, add an OpenRouter API key for the embedding index
+6. Open the chat sidebar and start chatting
 
 ## Privacy and external services
 
@@ -74,6 +75,7 @@ This plugin sends data to the provider you select when you use it.
 - Your prompts are sent to OpenRouter or to OpenAI through the local Codex CLI, depending on the selected provider
 - If note context is enabled, the active note content is sent with your request
 - If vault RAG is enabled, relevant markdown snippets from across your vault are sent with your request
+- If vault embeddings are enabled, eligible text chunks are sent to OpenRouter for embedding during indexing and query retrieval
 - If you use PDF upload, the selected PDF is sent to OpenRouter for OCR/extraction
 - OpenRouter API keys and chat session data are stored in the plugin data inside your vault's Obsidian config
 - ChatGPT/Codex mode does not store an API key in the plugin; it relies on your local Codex login instead

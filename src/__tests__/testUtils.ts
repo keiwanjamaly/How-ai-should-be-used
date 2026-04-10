@@ -25,6 +25,17 @@ export function assertFalse(condition: boolean, message?: string): void {
   }
 }
 
+export function assertAlmostEqual(
+  actual: number,
+  expected: number,
+  epsilon = 1e-6,
+  message?: string,
+): void {
+  if (Math.abs(actual - expected) > epsilon) {
+    throw new Error(message || `Expected ${expected} ± ${epsilon}, got ${actual}`);
+  }
+}
+
 // ── Test runner ─────────────────────────────────────────────────────────────
 
 type TestFn = () => void;

@@ -37,6 +37,9 @@ const context = await esbuild.context({
   logLevel: "info",
   sourcemap: prod ? false : "inline",
   treeShaking: true,
+  loader: {
+    ".wasm": "binary",
+  },
   outfile: "main.js",
   minify: prod,
 });

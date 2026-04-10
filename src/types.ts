@@ -50,6 +50,8 @@ export interface VaultRAGSettings {
   maxChunks: number;
   chunkSize: number;
   maxFileSizeKB: number;
+  embeddingModel: string;
+  includeExtensions: string[];
 }
 
 export interface ChatSession {
@@ -88,6 +90,8 @@ export const DEFAULT_SETTINGS: ObsidianAIChatSettings = {
     maxChunks: 6,
     chunkSize: 1200,
     maxFileSizeKB: 300,
+    embeddingModel: "openai/text-embedding-3-small",
+    includeExtensions: [".md"],
   },
   systemPrompt: "",
   mcp: DEFAULT_MCP_SETTINGS,

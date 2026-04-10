@@ -8,6 +8,7 @@ import {
 import { MCPService } from "./services/MCPService";
 import { DEFAULT_SETTINGS } from "./types";
 import { getCodexLoginStatus } from "./services/CodexCli";
+import { normalizeExtensions } from "./utils/vaultEmbeddings";
 
 export class ObsidianAIChatSettingTab extends PluginSettingTab {
   constructor(app: App, private readonly plugin: ObsidianAIChatPlugin) {
@@ -67,8 +68,8 @@ export class ObsidianAIChatSettingTab extends PluginSettingTab {
     containerEl.createEl("h3", { text: "Vault RAG", cls: "oa-settings-section" });
 
     new Setting(containerEl)
-      .setName("Enable vault-wide retrieval")
-      .setDesc("Search markdown notes across the vault and send the most relevant snippets with each prompt.")
+      .setName("Enable vault embeddings")
+      .setDesc("Embed eligible text files through OpenRouter, store them on disk, and retrieve the most relevant snippets during chat.")
       .addToggle((toggle) =>
         toggle
           .setValue(this.plugin.settings.vaultRAG.enabled)
@@ -84,9 +85,62 @@ export class ObsidianAIChatSettingTab extends PluginSettingTab {
       return;
     }
 
+    if (this.plugin.settings.provider === "chatgpt") {
+      new Setting(containerEl)
+        .setName("OpenRouter API key for embeddings")
+        .setDesc("Vault embeddings use OpenRouter even when chat replies are using Codex OAuth.")
+        .addText((text) => {
+          text.inputEl.type = "password";
+          return text
+            .setPlaceholder("sk-or-v1-...")
+            .setValue(this.plugin.settings.openRouter.apiKey)
+            .onChange(async (value) => {
+              this.plugin.settings.openRouter.apiKey = value.trim();
+              await this.plugin.saveSettings();
+              await this.plugin.refreshVaultRAGIndex();
+            });
+        });
+    } else {
+      containerEl.createEl("p", {
+        text: "Vault embeddings reuse the OpenRouter API key above and store their SQLite index inside the plugin folder.",
+        cls: "oa-settings-desc",
+      });
+    }
+
+    new Setting(containerEl)
+      .setName("Embedding model")
+      .setDesc("OpenRouter embedding model slug used for the on-disk vault index.")
+      .addText((text) =>
+        text
+          .setPlaceholder("openai/text-embedding-3-small")
+          .setValue(this.plugin.settings.vaultRAG.embeddingModel)
+          .onChange(async (value) => {
+            this.plugin.settings.vaultRAG.embeddingModel =
+              value.trim() || DEFAULT_SETTINGS.vaultRAG.embeddingModel;
+            await this.plugin.saveSettings();
+            await this.plugin.refreshVaultRAGIndex();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Included file extensions")
+      .setDesc("Comma-separated list of text file extensions to embed, for example `.md, .txt`.")
+      .addText((text) =>
+        text
+          .setPlaceholder(".md, .txt")
+          .setValue(this.plugin.settings.vaultRAG.includeExtensions.join(", "))
+          .onChange(async (value) => {
+            const parsed = normalizeExtensions(value.split(","));
+            this.plugin.settings.vaultRAG.includeExtensions =
+              parsed.length > 0 ? parsed : DEFAULT_SETTINGS.vaultRAG.includeExtensions;
+            await this.plugin.saveSettings();
+            await this.plugin.refreshVaultRAGIndex();
+          }),
+      );
+
     new Setting(containerEl)
       .setName("Max retrieved snippets")
-      .setDesc("Upper bound for note snippets added to each request.")
+      .setDesc("Upper bound for retrieved vault snippets added to each request.")
       .addText((text) =>
         text
           .setPlaceholder("6")
@@ -149,6 +203,9 @@ export class ObsidianAIChatSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.openRouter.apiKey = value.trim();
             await this.plugin.saveSettings();
+            if (this.plugin.settings.vaultRAG.enabled) {
+              await this.plugin.refreshVaultRAGIndex();
+            }
           });
       });
 
@@ -287,7 +344,7 @@ export class ObsidianAIChatSettingTab extends PluginSettingTab {
       );
 
     containerEl.createEl("p", {
-      text: "Plugin-managed MCP tools and PDF OCR remain OpenRouter-only for now.",
+      text: "Plugin-managed MCP tools, PDF OCR, and vault embeddings remain OpenRouter-only for now.",
       cls: "oa-settings-desc",
     });
   }

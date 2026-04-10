@@ -7,7 +7,7 @@
     "build": "node esbuild.config.mjs production",
     "dev": "node esbuild.config.mjs",
     "check": "tsc -p tsconfig.json --noEmit",
-    "test": "npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/DiffService.test.ts && npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/mcp.test.ts && npx ts-node src/__tests__/FileChangeParser.test.ts && npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/CodexCli.test.ts && npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/CodexModels.test.ts && npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/fileChangeDetection.test.ts && npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/VaultRAGService.test.ts",
+    "test": "npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/DiffService.test.ts && npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/mcp.test.ts && npx ts-node src/__tests__/FileChangeParser.test.ts && npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/CodexCli.test.ts && npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/CodexModels.test.ts && npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/fileChangeDetection.test.ts && npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/VaultRAGService.test.ts && npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/VaultEmbeddings.test.ts",
     "release:prepare": "node scripts/prepare-release.mjs",
     "deploy": "npm run build && mkdir -p \"${OBSIDIAN_PLUGIN_PATH:?Set OBSIDIAN_PLUGIN_PATH}\" && cp main.js manifest.json styles.css \"$OBSIDIAN_PLUGIN_PATH\""
   },
@@ -26,6 +26,7 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "diff": "^8.0.4"
+    "diff": "^8.0.4",
+    "sql.js": "^1.12.0"
   }
 }

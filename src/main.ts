@@ -21,6 +21,7 @@ import { mergeMCPServers } from "./types/mcp";
 import type { MCPServers } from "./types/mcp";
 import { fetchCodexAvailableModels } from "./services/CodexModels";
 import type { VaultRAGIndexStatus } from "./services/VaultRAGService";
+import { normalizeExtensions } from "./utils/vaultEmbeddings";
 
 export default class ObsidianAIChatPlugin extends Plugin {
   settings!: ObsidianAIChatSettings;
@@ -39,14 +40,24 @@ export default class ObsidianAIChatPlugin extends Plugin {
     this.diffService = new DiffService(this.app);
     this.fileChangeDetector = new FileChangeDetector(this.app, this.diffService);
     this.mcpService = new MCPService();
-    this.vaultRAGService = new VaultRAGService(this.app);
+    this.vaultRAGService = new VaultRAGService(this.app, this.manifest.id, () => this.settings);
     this.vaultRAGStatusEl = this.addStatusBarItem();
     this.vaultRAGStatusEl.addClass("oa-rag-status");
     this.register(() => this.vaultRAGStatusEl.remove());
     this.register(this.vaultRAGService.onStatusChange((status) => {
       this.updateVaultRAGStatusBar(status);
     }));
-    this.vaultRAGService.refreshStatus(this.settings.vaultRAG, false);
+    try {
+      await this.vaultRAGService.initialize();
+      await this.vaultRAGService.refreshStatus();
+    } catch (error) {
+      console.error("Failed to initialize vault embedding index:", error);
+      this.vaultRAGStatusEl.setText("RAG error");
+      this.vaultRAGStatusEl.setAttr(
+        "title",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
     
     // Set up change detection
     this.fileChangeDetector.onChange((pendingDiff) => {
@@ -57,10 +68,10 @@ export default class ObsidianAIChatPlugin extends Plugin {
       if (!(file instanceof TFile)) {
         return;
       }
-      this.vaultRAGService.invalidateFile(file.path);
-      this.vaultRAGService.refreshStatus(this.settings.vaultRAG, false);
-      if (this.settings.vaultRAG.enabled && file.extension === "md") {
-        void this.vaultRAGService.indexFile(file, this.settings.vaultRAG);
+      if (this.settings.vaultRAG.enabled) {
+        void this.vaultRAGService.indexFile(file);
+      } else {
+        void this.vaultRAGService.refreshStatus();
       }
     }));
 
@@ -68,24 +79,23 @@ export default class ObsidianAIChatPlugin extends Plugin {
       if (!(file instanceof TFile)) {
         return;
       }
-      this.vaultRAGService.invalidateFile(file.path);
-      this.vaultRAGService.refreshStatus(this.settings.vaultRAG, false);
-      if (this.settings.vaultRAG.enabled && file.extension === "md") {
-        void this.vaultRAGService.indexFile(file, this.settings.vaultRAG);
+      if (this.settings.vaultRAG.enabled) {
+        void this.vaultRAGService.indexFile(file);
+      } else {
+        void this.vaultRAGService.refreshStatus();
       }
     }));
 
     this.registerEvent(this.app.vault.on("delete", (file) => {
-      this.vaultRAGService.invalidateFile(file.path);
-      this.vaultRAGService.refreshStatus(this.settings.vaultRAG, false);
+      void this.vaultRAGService.removeFile(file.path);
     }));
 
     this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
-      this.vaultRAGService.invalidateFile(oldPath);
-      this.vaultRAGService.invalidateFile(file.path);
-      this.vaultRAGService.refreshStatus(this.settings.vaultRAG, false);
-      if (this.settings.vaultRAG.enabled && file instanceof TFile && file.extension === "md") {
-        void this.vaultRAGService.indexFile(file, this.settings.vaultRAG);
+      void this.vaultRAGService.removeFile(oldPath);
+      if (this.settings.vaultRAG.enabled && file instanceof TFile) {
+        void this.vaultRAGService.indexFile(file);
+      } else {
+        void this.vaultRAGService.refreshStatus();
       }
     }));
     
@@ -125,6 +135,22 @@ export default class ObsidianAIChatPlugin extends Plugin {
         const currentState = this.fileChangeDetector.getEnabled();
         this.fileChangeDetector.setEnabled(!currentState);
         new Notice(`Change detection ${!currentState ? "enabled" : "disabled"}`);
+      },
+    });
+
+    this.addCommand({
+      id: "rebuild-vault-embedding-index",
+      name: "Rebuild Vault Embedding Index",
+      callback: () => {
+        void this.rebuildVaultRAGIndex();
+      },
+    });
+
+    this.addCommand({
+      id: "clear-vault-embedding-index",
+      name: "Clear Vault Embedding Index",
+      callback: () => {
+        void this.clearVaultRAGIndex();
       },
     });
 
@@ -198,12 +224,32 @@ export default class ObsidianAIChatPlugin extends Plugin {
   }
 
   async refreshVaultRAGIndex(): Promise<void> {
-    this.vaultRAGService.refreshStatus(this.settings.vaultRAG, false);
+    try {
+      await this.vaultRAGService.refreshStatus();
+      if (this.settings.vaultRAG.enabled) {
+        await this.vaultRAGService.refreshIndex();
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("Failed to refresh vault embedding index:", error);
+      new Notice(`Vault embedding index failed: ${message}`);
+    }
+  }
+
+  async rebuildVaultRAGIndex(): Promise<void> {
     if (!this.settings.vaultRAG.enabled) {
+      new Notice("Enable Vault RAG first to build the embedding index.");
       return;
     }
 
-    await this.vaultRAGService.warmIndex(this.settings.vaultRAG);
+    await this.vaultRAGService.clearIndex();
+    await this.vaultRAGService.refreshIndex();
+    new Notice("Vault embedding index rebuilt.");
+  }
+
+  async clearVaultRAGIndex(): Promise<void> {
+    await this.vaultRAGService.clearIndex();
+    new Notice("Vault embedding index cleared.");
   }
 
   async refreshCodexModels(force: boolean): Promise<string[]> {
@@ -302,6 +348,11 @@ export default class ObsidianAIChatPlugin extends Plugin {
       vaultRAG: {
         ...DEFAULT_SETTINGS.vaultRAG,
         ...loaded?.vaultRAG,
+        embeddingModel:
+          loaded?.vaultRAG?.embeddingModel?.trim() || DEFAULT_SETTINGS.vaultRAG.embeddingModel,
+        includeExtensions: normalizeExtensions(
+          loaded?.vaultRAG?.includeExtensions ?? DEFAULT_SETTINGS.vaultRAG.includeExtensions,
+        ),
       },
       chatSessions: loaded?.chatSessions ?? DEFAULT_SETTINGS.chatSessions,
       activeSessionId: loaded?.activeSessionId ?? DEFAULT_SETTINGS.activeSessionId,
@@ -330,15 +381,19 @@ export default class ObsidianAIChatPlugin extends Plugin {
     this.vaultRAGStatusEl.setText(`${prefix} ${indexed}/${eligible} (${percent}%)`);
     this.vaultRAGStatusEl.setAttr(
       "aria-label",
-      `Vault RAG indexed ${indexed} of ${eligible} eligible markdown notes`,
+      `Vault RAG indexed ${indexed} of ${eligible} eligible files`,
     );
     this.vaultRAGStatusEl.setAttr(
       "title",
       [
-        `${indexed} of ${eligible} eligible markdown notes are indexed for vault chat.`,
-        `${status.skippedFiles} notes are currently skipped because they exceed the configured size limit.`,
-        status.isIndexing ? "Background indexing is still running." : "Background indexing is idle.",
-      ].join("\n"),
+        `${indexed} of ${eligible} eligible files are embedded for vault chat.`,
+        `${status.staleFiles} files are waiting for embedding refresh.`,
+        `${status.failedFiles} files currently have embedding errors.`,
+        `${status.skippedFiles} files are skipped by the current extension or size filters.`,
+        `Embedding model: ${status.activeModel || "unknown"}`,
+        status.isIndexing ? `Background indexing phase: ${status.phase}.` : "Background indexing is idle.",
+        status.lastError ? `Last error: ${status.lastError}` : "",
+      ].filter(Boolean).join("\n"),
     );
   }
 
