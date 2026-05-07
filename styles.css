@@ -760,6 +760,12 @@
   overflow: hidden;
 }
 
+.cm-oa-cached-selection {
+  background: color-mix(in srgb, var(--interactive-accent) 18%, transparent);
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--interactive-accent) 55%, transparent);
+  border-radius: 2px;
+}
+
 .oa-diff-proposal-summary {
   display: flex;
   align-items: center;

@@ -1,6 +1,10 @@
 import { App, MarkdownView, TFile, type EditorPosition } from "obsidian";
 import type { ToolDefinition, ToolExecutionResult } from "../types/tools";
 import {
+  clearCachedSelectionHighlight,
+  setCachedSelectionHighlight,
+} from "../editor/CachedSelectionHighlight";
+import {
   ACTIVE_NOTE_REPLACEMENT_TOOL_SCHEMA,
   ACTIVE_SELECTION_REPLACEMENT_TOOL_SCHEMA,
   buildCodexEditInstruction,
@@ -19,6 +23,8 @@ export class InternalToolService {
     selectedText: string;
     from: EditorPosition;
     to: EditorPosition;
+    startOffset: number;
+    endOffset: number;
   } | null = null;
 
   constructor(private readonly app: App) {}
@@ -141,14 +147,16 @@ export class InternalToolService {
 
     const liveSelection = this.getLiveSelectionContext(view);
     if (liveSelection) {
-      this.lastSelectionContext = {
-        filePath: view.file.path,
-        ...liveSelection,
-      };
-      return liveSelection;
+      return this.cacheSelectionContext(view, liveSelection);
+    }
+
+    if (view.editor?.hasFocus()) {
+      this.clearSelectionContext();
+      return null;
     }
 
     if (this.lastSelectionContext?.filePath === view.file.path) {
+      this.syncSelectionHighlight();
       return {
         selectedText: this.lastSelectionContext.selectedText,
         from: this.lastSelectionContext.from,
@@ -165,14 +173,62 @@ export class InternalToolService {
       this.lastMarkdownView = activeView;
       const liveSelection = this.getLiveSelectionContext(activeView);
       if (liveSelection) {
-        this.lastSelectionContext = {
-          filePath: activeView.file.path,
-          ...liveSelection,
-        };
-      } else if (this.lastSelectionContext?.filePath !== activeView.file.path) {
-        this.lastSelectionContext = null;
+        this.cacheSelectionContext(activeView, liveSelection);
+      } else if (activeView.editor?.hasFocus() || this.lastSelectionContext?.filePath !== activeView.file.path) {
+        this.clearSelectionContext();
+      } else {
+        this.syncSelectionHighlight();
       }
     }
+  }
+
+  private cacheSelectionContext(
+    view: MarkdownView,
+    selection: {
+      selectedText: string;
+      from: EditorPosition;
+      to: EditorPosition;
+    },
+  ): {
+    selectedText: string;
+    from: EditorPosition;
+    to: EditorPosition;
+  } {
+    const editor = view.editor;
+    const cachedSelection = {
+      filePath: view.file!.path,
+      selectedText: selection.selectedText,
+      from: selection.from,
+      to: selection.to,
+      startOffset: editor.posToOffset(selection.from),
+      endOffset: editor.posToOffset(selection.to),
+    };
+
+    this.lastSelectionContext = cachedSelection;
+    this.syncSelectionHighlight();
+
+    return {
+      selectedText: cachedSelection.selectedText,
+      from: cachedSelection.from,
+      to: cachedSelection.to,
+    };
+  }
+
+  private clearSelectionContext(): void {
+    this.lastSelectionContext = null;
+    clearCachedSelectionHighlight();
+  }
+
+  private syncSelectionHighlight(): void {
+    if (!this.lastSelectionContext || this.lastSelectionContext.startOffset >= this.lastSelectionContext.endOffset) {
+      clearCachedSelectionHighlight();
+      return;
+    }
+
+    setCachedSelectionHighlight(this.lastSelectionContext.filePath, {
+      from: this.lastSelectionContext.startOffset,
+      to: this.lastSelectionContext.endOffset,
+    });
   }
 
   private parseReplacementArgs(args: unknown): ActiveNoteReplacementArgs {

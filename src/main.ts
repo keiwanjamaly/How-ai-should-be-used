@@ -32,6 +32,7 @@ import type {
 import { fetchCodexAvailableModels } from "./services/CodexModels";
 import type { VaultRAGIndexStatus } from "./services/VaultRAGService";
 import { normalizeExtensions } from "./utils/vaultEmbeddings";
+import { cachedSelectionHighlightExtension } from "./editor/CachedSelectionHighlight";
 
 export default class ObsidianAIChatPlugin extends Plugin {
   settings!: ObsidianAIChatSettings;
@@ -114,6 +115,7 @@ export default class ObsidianAIChatPlugin extends Plugin {
     // Register the file change detector as a component
     this.addChild(this.fileChangeDetector);
     this.fileChangeDetector.initialize();
+    this.registerEditorExtension(cachedSelectionHighlightExtension);
 
     // Initialize MCP servers if enabled
     await this.initializeMCP();
