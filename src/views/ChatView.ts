@@ -1,5 +1,6 @@
 import { ItemView, MarkdownRenderer, Notice, WorkspaceLeaf, TFile, setIcon } from "obsidian";
 import type ObsidianAIChatPlugin from "../main";
+import { ChatStatusBar, type ChatStatusBarState, type ChatStatusBarRAGPhase } from "../components/ChatStatusBar";
 import type { LLMStrategy } from "../strategies/LLMStrategy";
 import { ChatRole, type ChatMessage, type ChatSession } from "../types";
 import type { ActiveNoteEditProposal, ToolExecutionEvent } from "../types/tools";
@@ -10,7 +11,6 @@ import type { VaultChunk } from "../services/VaultRAGService";
 export const CHAT_VIEW_TYPE = "obsidian-ai-chat-view";
 const DRAFT_RAG_PREVIEW_IDLE_MS = 700;
 const DRAFT_RAG_PREVIEW_TICK_MS = 50;
-type DraftRAGPreviewPhase = "idle" | "waiting" | "computing";
 
 export class ChatView extends ItemView {
   private messages: ChatMessage[] = [];
@@ -19,17 +19,11 @@ export class ChatView extends ItemView {
   private sendButtonEl!: HTMLButtonElement;
   private stopButtonEl!: HTMLButtonElement;
   private newChatButtonEl!: HTMLButtonElement;
-  private contextToggleEl!: HTMLButtonElement;
-  private contextBadgeEl!: HTMLDivElement;
-  private selectionBadgeEl!: HTMLDivElement;
-  private ragBadgeEl!: HTMLDivElement;
-  private ragPreviewToggleEl!: HTMLLabelElement;
-  private ragPreviewToggleInputEl!: HTMLInputElement;
+  private statusBar!: ChatStatusBar;
   private sessionSelectorEl!: HTMLSelectElement;
   private currentSessionId: string | null = null;
   private pdfExtractedText: string | null = null;
   private pdfFilename: string | null = null;
-  private pdfBadgeEl!: HTMLDivElement;
   private pdfUploadBtnEl!: HTMLButtonElement;
   private pdfFileInputEl!: HTMLInputElement;
   private currentAbortController: AbortController | null = null;
@@ -40,12 +34,12 @@ export class ChatView extends ItemView {
   private messageWrappers = new Map<ChatMessage, HTMLDivElement>();
   private messageCleanupMap = new Map<ChatMessage, () => void>();
   private messageRenderState = new WeakMap<HTMLDivElement, { rendering: boolean; pending: boolean; message: ChatMessage }>();
-  private ragPreviewEnabled = true;
+  private ragEnabled = true;
   private previewRetrievedChunks: VaultChunk[] = [];
   private draftRAGPreviewTimer: number | null = null;
   private draftRAGPreviewTickTimer: number | null = null;
   private draftRAGPreviewRequestId = 0;
-  private draftRAGPreviewPhase: DraftRAGPreviewPhase = "idle";
+  private draftRAGPreviewPhase: ChatStatusBarRAGPhase = "idle";
   private draftRAGPreviewProgress = 0;
   private draftRAGPreviewStartedAt = 0;
 
@@ -93,18 +87,6 @@ export class ChatView extends ItemView {
       this.selectedModel = this.modelSelectorEl.value;
     });
 
-    this.contextToggleEl = headerActions.createEl("button", {
-      cls: "oa-chat-context-toggle",
-      attr: {
-        title: "Toggle file context inclusion",
-        "aria-label": "Toggle file context",
-      },
-    });
-    setIcon(this.contextToggleEl, "paperclip");
-    this.preserveMarkdownContextOnPointerDown(this.contextToggleEl);
-    this.contextToggleEl.addEventListener("click", () => this.toggleFileContext());
-    this.updateContextToggleState();
-
     this.sessionSelectorEl = headerActions.createEl("select", {
       cls: "oa-chat-session-selector",
       attr: { title: "Switch conversation", "aria-label": "Switch conversation" },
@@ -129,40 +111,14 @@ export class ChatView extends ItemView {
 
     const composer = root.createDiv({ cls: "oa-chat-composer" });
 
-    const badgesRow = composer.createDiv({ cls: "oa-chat-badges-row" });
-
-    this.contextBadgeEl = badgesRow.createDiv({ cls: "oa-chat-context-badge" });
-    this.updateContextBadge();
-
-    this.selectionBadgeEl = badgesRow.createDiv({ cls: "oa-chat-selection-badge" });
-    this.updateSelectionBadge();
-
-    this.ragBadgeEl = badgesRow.createDiv({ cls: "oa-chat-rag-badge" });
-
-    this.ragPreviewToggleEl = badgesRow.createEl("label", {
-      cls: "oa-chat-rag-preview-toggle",
-      attr: {
-        title: "Toggle draft RAG preview",
-        "aria-label": "Toggle draft RAG preview",
-      },
+    this.statusBar = new ChatStatusBar({
+      parent: composer,
+      preserveMarkdownContextOnPointerDown: (element) => this.preserveMarkdownContextOnPointerDown(element),
+      onToggleContext: () => this.toggleFileContext(),
+      onToggleRAG: () => this.toggleRAG(),
+      onRemovePDF: () => this.clearPDFContext(),
     });
-    this.ragPreviewToggleInputEl = this.ragPreviewToggleEl.createEl("input", {
-      cls: "oa-chat-rag-preview-toggle-input",
-      attr: { type: "checkbox" },
-    });
-    this.ragPreviewToggleInputEl.checked = this.ragPreviewEnabled;
-    this.ragPreviewToggleEl.createSpan({ cls: "oa-chat-rag-preview-toggle-slider" });
-    this.ragPreviewToggleEl.createSpan({
-      cls: "oa-chat-rag-preview-toggle-label",
-      text: "Preview",
-    });
-    this.preserveMarkdownContextOnPointerDown(this.ragPreviewToggleEl);
-    this.ragPreviewToggleInputEl.addEventListener("change", () => this.toggleDraftRAGPreview());
-    this.updateDraftRAGPreviewToggle();
-    this.updateRAGBadge();
-
-    this.pdfBadgeEl = badgesRow.createDiv({ cls: "oa-chat-pdf-badge" });
-    this.pdfBadgeEl.hide();
+    this.renderStatusBar();
 
     this.pdfFileInputEl = this.containerEl.createEl("input", {
       attr: { type: "file", accept: ".pdf", style: "display:none" },
@@ -225,14 +181,13 @@ export class ChatView extends ItemView {
     this.registerEvent(
       this.app.workspace.on("active-leaf-change", () => {
         this.plugin.internalToolService.captureMarkdownViewContext();
-        this.updateContextBadge();
-        this.updateSelectionBadge();
+        this.renderStatusBar();
         this.scheduleDraftRAGPreview();
       })
     );
 
     this.plugin.internalToolService.captureMarkdownViewContext();
-    this.updateSelectionBadge();
+    this.renderStatusBar();
     this.restoreLastSession();
     void this.refreshProviderModels();
   }
@@ -247,13 +202,7 @@ export class ChatView extends ItemView {
 
   private toggleFileContext(): void {
     this.includeFileContext = !this.includeFileContext;
-    this.updateContextToggleState();
-    this.updateContextBadge();
-  }
-
-  private updateContextToggleState(): void {
-    this.contextToggleEl.toggleClass("oa-chat-context-active", this.includeFileContext);
-    this.contextToggleEl.toggleClass("oa-chat-context-inactive", !this.includeFileContext);
+    this.renderStatusBar();
   }
 
   private refreshModelSelector(): void {
@@ -280,13 +229,14 @@ export class ChatView extends ItemView {
     const supportsPDFUpload = this.plugin.supportsPDFUpload();
     this.pdfUploadBtnEl.toggleClass("oa-hidden", !supportsPDFUpload);
     if (!supportsPDFUpload) {
-      this.pdfExtractedText = null;
-      this.pdfFilename = null;
-      this.updatePDFBadge();
+      this.clearPDFContext();
     }
 
-    this.updateDraftRAGPreviewToggle();
-    this.updateRAGBadge();
+    if (!this.plugin.settings.vaultRAG.enabled || !this.ragEnabled) {
+      this.resetDraftRAGPreviewState();
+    }
+
+    this.renderStatusBar();
   }
 
   private async refreshProviderModels(): Promise<void> {
@@ -314,55 +264,8 @@ export class ChatView extends ItemView {
   private preserveMarkdownContextOnPointerDown(element: HTMLElement): void {
     element.addEventListener("pointerdown", () => {
       this.plugin.internalToolService.captureMarkdownViewContext();
-      this.updateSelectionBadge();
+      this.renderStatusBar();
     });
-  }
-
-  private updateContextBadge(): void {
-    if (!this.includeFileContext) {
-      this.contextBadgeEl.setText("");
-      this.contextBadgeEl.hide();
-      return;
-    }
-
-    const file = this.getActiveFile();
-    if (file) {
-      this.contextBadgeEl.empty();
-      const badgeIcon = this.contextBadgeEl.createSpan({ cls: "oa-chat-context-badge-icon" });
-      setIcon(badgeIcon, "paperclip");
-      this.contextBadgeEl.createSpan({ text: file.name });
-      this.contextBadgeEl.show();
-    } else {
-      this.contextBadgeEl.empty();
-      this.contextBadgeEl.hide();
-    }
-  }
-
-  private updateSelectionBadge(): void {
-    this.selectionBadgeEl.empty();
-
-    if (!this.includeFileContext) {
-      this.selectionBadgeEl.hide();
-      return;
-    }
-
-    const selection = this.plugin.internalToolService.getActiveSelectionContext();
-    if (!selection) {
-      this.selectionBadgeEl.hide();
-      return;
-    }
-
-    const badgeIcon = this.selectionBadgeEl.createSpan({ cls: "oa-chat-selection-badge-icon" });
-    setIcon(badgeIcon, "quote-glyph");
-
-    const preview = this.summarizeSelection(selection.selectedText);
-    const lineRange = `${selection.from.line + 1}:${selection.from.ch}-${selection.to.line + 1}:${selection.to.ch}`;
-    this.selectionBadgeEl.createSpan({ text: `Selection: ${preview}` });
-    this.selectionBadgeEl.setAttr(
-      "title",
-      `Cached selection ${lineRange}\n\n${selection.selectedText}`,
-    );
-    this.selectionBadgeEl.show();
   }
 
   private summarizeSelection(text: string): string {
@@ -374,10 +277,10 @@ export class ChatView extends ItemView {
     return `${singleLine.slice(0, 45)}...`;
   }
 
-  private toggleDraftRAGPreview(): void {
-    this.ragPreviewEnabled = this.ragPreviewToggleInputEl.checked;
-    this.updateDraftRAGPreviewToggle();
-    if (!this.ragPreviewEnabled) {
+  private toggleRAG(): void {
+    this.ragEnabled = !this.ragEnabled;
+    this.renderStatusBar();
+    if (!this.ragEnabled) {
       this.clearDraftRAGPreview();
       return;
     }
@@ -385,59 +288,39 @@ export class ChatView extends ItemView {
     this.scheduleDraftRAGPreview();
   }
 
-  private updateDraftRAGPreviewToggle(): void {
-    const visible = this.plugin.settings.vaultRAG.enabled;
-    this.ragPreviewToggleEl.toggleClass("oa-hidden", !visible);
-    this.ragPreviewToggleInputEl.checked = this.ragPreviewEnabled;
-    this.ragPreviewToggleEl.toggleClass("is-enabled", this.ragPreviewEnabled);
-    this.ragPreviewToggleEl.toggleClass("is-disabled", !this.ragPreviewEnabled);
+  private renderStatusBar(): void {
+    this.statusBar.update(this.buildStatusBarState());
   }
 
-  private updateRAGBadge(): void {
-    this.ragBadgeEl.empty();
+  private buildStatusBarState(): ChatStatusBarState {
+    const selection = this.includeFileContext
+      ? this.plugin.internalToolService.getActiveSelectionContext()
+      : null;
 
-    if (!this.plugin.settings.vaultRAG.enabled) {
-      if (this.draftRAGPreviewTimer !== null) {
-        window.clearTimeout(this.draftRAGPreviewTimer);
-        this.draftRAGPreviewTimer = null;
-      }
-      this.stopDraftRAGPreviewTicking();
-      this.draftRAGPreviewRequestId += 1;
-      this.draftRAGPreviewPhase = "idle";
-      this.draftRAGPreviewProgress = 0;
-      this.previewRetrievedChunks = [];
-      this.ragBadgeEl.hide();
-      return;
-    }
-
-    const previewPaths = getUniqueChunkPaths(this.previewRetrievedChunks);
-    const showProgress = this.draftRAGPreviewPhase !== "idle";
-    if (showProgress) {
-      const progressRing = this.ragBadgeEl.createSpan({ cls: "oa-chat-rag-progress-ring" });
-      progressRing.toggleClass("is-computing", this.draftRAGPreviewPhase === "computing");
-      progressRing.style.setProperty("--oa-rag-progress", `${Math.round(this.draftRAGPreviewProgress * 100)}%`);
-    }
-
-    const badgeIcon = this.ragBadgeEl.createSpan({ cls: "oa-chat-rag-badge-icon" });
-    setIcon(badgeIcon, "library");
-    this.ragBadgeEl.createSpan({
-      text: previewPaths.length > 0
-        ? `Vault RAG Preview (${previewPaths.length})`
-        : "Vault RAG",
-    });
-    this.ragBadgeEl.setAttr(
-      "title",
-      previewPaths.length > 0
-        ? `Draft preview would use:\n${previewPaths.join("\n")}`
-        : this.draftRAGPreviewPhase === "waiting"
-          ? `Draft preview updates in ${Math.max(0, Math.ceil((1 - this.draftRAGPreviewProgress) * DRAFT_RAG_PREVIEW_IDLE_MS))} ms.`
-          : this.draftRAGPreviewPhase === "computing"
-            ? "Computing draft preview now."
-            : this.ragPreviewEnabled
-              ? "Vault-wide retrieval is enabled for markdown notes. Pause typing to preview which notes would be used."
-              : "Draft RAG preview is off for this chat view.",
-    );
-    this.ragBadgeEl.show();
+    return {
+      context: {
+        enabled: this.includeFileContext,
+        fileName: this.getActiveFile()?.name ?? null,
+        selection: selection
+          ? {
+            preview: this.summarizeSelection(selection.selectedText),
+            lineRange: `${selection.from.line + 1}:${selection.from.ch}-${selection.to.line + 1}:${selection.to.ch}`,
+            fullText: selection.selectedText,
+          }
+          : null,
+      },
+      rag: {
+        available: this.plugin.settings.vaultRAG.enabled,
+        enabled: this.ragEnabled,
+        phase: this.draftRAGPreviewPhase,
+        progress: this.draftRAGPreviewProgress,
+        previewPaths: getUniqueChunkPaths(this.previewRetrievedChunks),
+        idleDelayMs: DRAFT_RAG_PREVIEW_IDLE_MS,
+      },
+      pdf: {
+        filename: this.pdfFilename,
+      },
+    };
   }
 
   private handleDraftInputChanged(): void {
@@ -465,7 +348,7 @@ export class ChatView extends ItemView {
 
   private shouldPreviewDraftRAG(draft: string): boolean {
     return this.plugin.settings.vaultRAG.enabled
-      && this.ragPreviewEnabled
+      && this.ragEnabled
       && !this.busy
       && draft.length > 0;
   }
@@ -476,13 +359,17 @@ export class ChatView extends ItemView {
       this.draftRAGPreviewTimer = null;
     }
 
+    this.resetDraftRAGPreviewState();
+    this.renderStatusBar();
+  }
+
+  private resetDraftRAGPreviewState(): void {
     this.stopDraftRAGPreviewTicking();
     this.draftRAGPreviewRequestId += 1;
     this.draftRAGPreviewPhase = "idle";
     this.draftRAGPreviewProgress = 0;
     this.draftRAGPreviewStartedAt = 0;
     this.previewRetrievedChunks = [];
-    this.updateRAGBadge();
   }
 
   private async refreshDraftRAGPreview(draft: string): Promise<void> {
@@ -495,7 +382,7 @@ export class ChatView extends ItemView {
     this.stopDraftRAGPreviewTicking();
     this.draftRAGPreviewPhase = "computing";
     this.draftRAGPreviewProgress = 1;
-    this.updateRAGBadge();
+    this.renderStatusBar();
 
     try {
       const chunks = await this.plugin.vaultRAGService.retrieveRelevantChunks(
@@ -515,7 +402,7 @@ export class ChatView extends ItemView {
       this.draftRAGPreviewPhase = "idle";
       this.draftRAGPreviewProgress = 0;
       this.previewRetrievedChunks = chunks;
-      this.updateRAGBadge();
+      this.renderStatusBar();
     } catch (error) {
       if (requestId !== this.draftRAGPreviewRequestId) {
         return;
@@ -525,7 +412,7 @@ export class ChatView extends ItemView {
       this.draftRAGPreviewPhase = "idle";
       this.draftRAGPreviewProgress = 0;
       this.previewRetrievedChunks = [];
-      this.updateRAGBadge();
+      this.renderStatusBar();
     }
   }
 
@@ -535,11 +422,11 @@ export class ChatView extends ItemView {
     this.draftRAGPreviewProgress = 0;
     this.draftRAGPreviewStartedAt = Date.now();
     this.previewRetrievedChunks = [];
-    this.updateRAGBadge();
+    this.renderStatusBar();
     this.draftRAGPreviewTickTimer = window.setInterval(() => {
       const elapsed = Date.now() - this.draftRAGPreviewStartedAt;
       this.draftRAGPreviewProgress = Math.max(0, Math.min(elapsed / DRAFT_RAG_PREVIEW_IDLE_MS, 1));
-      this.updateRAGBadge();
+      this.renderStatusBar();
       if (this.draftRAGPreviewProgress >= 1) {
         this.stopDraftRAGPreviewTicking();
       }
@@ -589,6 +476,10 @@ export class ChatView extends ItemView {
   }
 
   private async buildVaultContextMessage(query: string): Promise<ChatMessage | null> {
+    if (!this.plugin.settings.vaultRAG.enabled || !this.ragEnabled) {
+      return null;
+    }
+
     const chunks = await this.plugin.vaultRAGService.retrieveRelevantChunks(
       query,
       this.getActiveFile()?.path,
@@ -1114,7 +1005,7 @@ export class ChatView extends ItemView {
       const text = await this.performOCR(file);
       this.pdfExtractedText = text;
       this.pdfFilename = file.name;
-      this.updatePDFBadge();
+      this.renderStatusBar();
       new Notice(`PDF extracted: ${file.name}`);
     } catch (error) {
       new Notice(`PDF extraction failed: ${formatErrorMessage(error)}`);
@@ -1180,30 +1071,10 @@ export class ChatView extends ItemView {
     return content;
   }
 
-  private updatePDFBadge(): void {
-    this.pdfBadgeEl.empty();
-
-    if (!this.pdfExtractedText || !this.pdfFilename) {
-      this.pdfBadgeEl.hide();
-      return;
-    }
-
-    const icon = this.pdfBadgeEl.createSpan({ cls: "oa-chat-pdf-badge-icon" });
-    setIcon(icon, "file-text");
-    this.pdfBadgeEl.createSpan({ text: this.pdfFilename });
-
-    const dismissBtn = this.pdfBadgeEl.createEl("button", {
-      cls: "oa-chat-pdf-badge-dismiss",
-      attr: { title: "Remove PDF context", "aria-label": "Remove PDF" },
-    });
-    setIcon(dismissBtn, "x");
-    dismissBtn.addEventListener("click", () => {
-      this.pdfExtractedText = null;
-      this.pdfFilename = null;
-      this.updatePDFBadge();
-    });
-
-    this.pdfBadgeEl.show();
+  private clearPDFContext(): void {
+    this.pdfExtractedText = null;
+    this.pdfFilename = null;
+    this.renderStatusBar();
   }
 
   private async handleSend(): Promise<void> {
