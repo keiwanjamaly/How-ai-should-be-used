@@ -4,9 +4,13 @@ import type { LLMStrategy } from "../strategies/LLMStrategy";
 import { ChatRole, type ChatMessage, type ChatSession } from "../types";
 import type { ActiveNoteEditProposal, ToolExecutionEvent } from "../types/tools";
 import { formatErrorMessage } from "../utils/errorUtils";
+import { getUniqueChunkPaths } from "../utils/ragPreview";
 import type { VaultChunk } from "../services/VaultRAGService";
 
 export const CHAT_VIEW_TYPE = "obsidian-ai-chat-view";
+const DRAFT_RAG_PREVIEW_IDLE_MS = 700;
+const DRAFT_RAG_PREVIEW_TICK_MS = 50;
+type DraftRAGPreviewPhase = "idle" | "waiting" | "computing";
 
 export class ChatView extends ItemView {
   private messages: ChatMessage[] = [];
@@ -19,6 +23,8 @@ export class ChatView extends ItemView {
   private contextBadgeEl!: HTMLDivElement;
   private selectionBadgeEl!: HTMLDivElement;
   private ragBadgeEl!: HTMLDivElement;
+  private ragPreviewToggleEl!: HTMLLabelElement;
+  private ragPreviewToggleInputEl!: HTMLInputElement;
   private sessionSelectorEl!: HTMLSelectElement;
   private currentSessionId: string | null = null;
   private pdfExtractedText: string | null = null;
@@ -34,7 +40,14 @@ export class ChatView extends ItemView {
   private messageWrappers = new Map<ChatMessage, HTMLDivElement>();
   private messageCleanupMap = new Map<ChatMessage, () => void>();
   private messageRenderState = new WeakMap<HTMLDivElement, { rendering: boolean; pending: boolean; message: ChatMessage }>();
-  private lastRetrievedChunks: VaultChunk[] = [];
+  private ragPreviewEnabled = true;
+  private previewRetrievedChunks: VaultChunk[] = [];
+  private draftRAGPreviewTimer: number | null = null;
+  private draftRAGPreviewTickTimer: number | null = null;
+  private draftRAGPreviewRequestId = 0;
+  private draftRAGPreviewPhase: DraftRAGPreviewPhase = "idle";
+  private draftRAGPreviewProgress = 0;
+  private draftRAGPreviewStartedAt = 0;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -125,6 +138,27 @@ export class ChatView extends ItemView {
     this.updateSelectionBadge();
 
     this.ragBadgeEl = badgesRow.createDiv({ cls: "oa-chat-rag-badge" });
+
+    this.ragPreviewToggleEl = badgesRow.createEl("label", {
+      cls: "oa-chat-rag-preview-toggle",
+      attr: {
+        title: "Toggle draft RAG preview",
+        "aria-label": "Toggle draft RAG preview",
+      },
+    });
+    this.ragPreviewToggleInputEl = this.ragPreviewToggleEl.createEl("input", {
+      cls: "oa-chat-rag-preview-toggle-input",
+      attr: { type: "checkbox" },
+    });
+    this.ragPreviewToggleInputEl.checked = this.ragPreviewEnabled;
+    this.ragPreviewToggleEl.createSpan({ cls: "oa-chat-rag-preview-toggle-slider" });
+    this.ragPreviewToggleEl.createSpan({
+      cls: "oa-chat-rag-preview-toggle-label",
+      text: "Preview",
+    });
+    this.preserveMarkdownContextOnPointerDown(this.ragPreviewToggleEl);
+    this.ragPreviewToggleInputEl.addEventListener("change", () => this.toggleDraftRAGPreview());
+    this.updateDraftRAGPreviewToggle();
     this.updateRAGBadge();
 
     this.pdfBadgeEl = badgesRow.createDiv({ cls: "oa-chat-pdf-badge" });
@@ -148,6 +182,7 @@ export class ChatView extends ItemView {
       attr: { placeholder: "Ask something...", rows: "3" },
     });
     this.preserveMarkdownContextOnPointerDown(this.inputEl);
+    this.inputEl.addEventListener("input", () => this.handleDraftInputChanged());
     this.inputEl.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
@@ -192,6 +227,7 @@ export class ChatView extends ItemView {
         this.plugin.internalToolService.captureMarkdownViewContext();
         this.updateContextBadge();
         this.updateSelectionBadge();
+        this.scheduleDraftRAGPreview();
       })
     );
 
@@ -204,6 +240,7 @@ export class ChatView extends ItemView {
   async onClose(): Promise<void> {
     this.saveCurrentSession();
     this.stopGeneration();
+    this.clearDraftRAGPreview();
     this.runMessageCleanups();
     this.containerEl.empty();
   }
@@ -247,6 +284,9 @@ export class ChatView extends ItemView {
       this.pdfFilename = null;
       this.updatePDFBadge();
     }
+
+    this.updateDraftRAGPreviewToggle();
+    this.updateRAGBadge();
   }
 
   private async refreshProviderModels(): Promise<void> {
@@ -334,28 +374,183 @@ export class ChatView extends ItemView {
     return `${singleLine.slice(0, 45)}...`;
   }
 
+  private toggleDraftRAGPreview(): void {
+    this.ragPreviewEnabled = this.ragPreviewToggleInputEl.checked;
+    this.updateDraftRAGPreviewToggle();
+    if (!this.ragPreviewEnabled) {
+      this.clearDraftRAGPreview();
+      return;
+    }
+
+    this.scheduleDraftRAGPreview();
+  }
+
+  private updateDraftRAGPreviewToggle(): void {
+    const visible = this.plugin.settings.vaultRAG.enabled;
+    this.ragPreviewToggleEl.toggleClass("oa-hidden", !visible);
+    this.ragPreviewToggleInputEl.checked = this.ragPreviewEnabled;
+    this.ragPreviewToggleEl.toggleClass("is-enabled", this.ragPreviewEnabled);
+    this.ragPreviewToggleEl.toggleClass("is-disabled", !this.ragPreviewEnabled);
+  }
+
   private updateRAGBadge(): void {
     this.ragBadgeEl.empty();
 
     if (!this.plugin.settings.vaultRAG.enabled) {
+      if (this.draftRAGPreviewTimer !== null) {
+        window.clearTimeout(this.draftRAGPreviewTimer);
+        this.draftRAGPreviewTimer = null;
+      }
+      this.stopDraftRAGPreviewTicking();
+      this.draftRAGPreviewRequestId += 1;
+      this.draftRAGPreviewPhase = "idle";
+      this.draftRAGPreviewProgress = 0;
+      this.previewRetrievedChunks = [];
       this.ragBadgeEl.hide();
       return;
+    }
+
+    const previewPaths = getUniqueChunkPaths(this.previewRetrievedChunks);
+    const showProgress = this.draftRAGPreviewPhase !== "idle";
+    if (showProgress) {
+      const progressRing = this.ragBadgeEl.createSpan({ cls: "oa-chat-rag-progress-ring" });
+      progressRing.toggleClass("is-computing", this.draftRAGPreviewPhase === "computing");
+      progressRing.style.setProperty("--oa-rag-progress", `${Math.round(this.draftRAGPreviewProgress * 100)}%`);
     }
 
     const badgeIcon = this.ragBadgeEl.createSpan({ cls: "oa-chat-rag-badge-icon" });
     setIcon(badgeIcon, "library");
     this.ragBadgeEl.createSpan({
-      text: this.lastRetrievedChunks.length > 0
-        ? `Vault RAG (${this.lastRetrievedChunks.length})`
+      text: previewPaths.length > 0
+        ? `Vault RAG Preview (${previewPaths.length})`
         : "Vault RAG",
     });
     this.ragBadgeEl.setAttr(
       "title",
-      this.lastRetrievedChunks.length > 0
-        ? this.lastRetrievedChunks.map((chunk) => chunk.path).join("\n")
-        : "Vault-wide retrieval is enabled for markdown notes.",
+      previewPaths.length > 0
+        ? `Draft preview would use:\n${previewPaths.join("\n")}`
+        : this.draftRAGPreviewPhase === "waiting"
+          ? `Draft preview updates in ${Math.max(0, Math.ceil((1 - this.draftRAGPreviewProgress) * DRAFT_RAG_PREVIEW_IDLE_MS))} ms.`
+          : this.draftRAGPreviewPhase === "computing"
+            ? "Computing draft preview now."
+            : this.ragPreviewEnabled
+              ? "Vault-wide retrieval is enabled for markdown notes. Pause typing to preview which notes would be used."
+              : "Draft RAG preview is off for this chat view.",
     );
     this.ragBadgeEl.show();
+  }
+
+  private handleDraftInputChanged(): void {
+    this.scheduleDraftRAGPreview();
+  }
+
+  private scheduleDraftRAGPreview(): void {
+    if (this.draftRAGPreviewTimer !== null) {
+      window.clearTimeout(this.draftRAGPreviewTimer);
+      this.draftRAGPreviewTimer = null;
+    }
+
+    const draft = this.inputEl.value.trim();
+    if (!this.shouldPreviewDraftRAG(draft)) {
+      this.clearDraftRAGPreview();
+      return;
+    }
+
+    this.startDraftRAGPreviewWaitingState();
+    this.draftRAGPreviewTimer = window.setTimeout(() => {
+      this.draftRAGPreviewTimer = null;
+      void this.refreshDraftRAGPreview(draft);
+    }, DRAFT_RAG_PREVIEW_IDLE_MS);
+  }
+
+  private shouldPreviewDraftRAG(draft: string): boolean {
+    return this.plugin.settings.vaultRAG.enabled
+      && this.ragPreviewEnabled
+      && !this.busy
+      && draft.length > 0;
+  }
+
+  private clearDraftRAGPreview(): void {
+    if (this.draftRAGPreviewTimer !== null) {
+      window.clearTimeout(this.draftRAGPreviewTimer);
+      this.draftRAGPreviewTimer = null;
+    }
+
+    this.stopDraftRAGPreviewTicking();
+    this.draftRAGPreviewRequestId += 1;
+    this.draftRAGPreviewPhase = "idle";
+    this.draftRAGPreviewProgress = 0;
+    this.draftRAGPreviewStartedAt = 0;
+    this.previewRetrievedChunks = [];
+    this.updateRAGBadge();
+  }
+
+  private async refreshDraftRAGPreview(draft: string): Promise<void> {
+    if (!this.shouldPreviewDraftRAG(draft)) {
+      this.clearDraftRAGPreview();
+      return;
+    }
+
+    const requestId = ++this.draftRAGPreviewRequestId;
+    this.stopDraftRAGPreviewTicking();
+    this.draftRAGPreviewPhase = "computing";
+    this.draftRAGPreviewProgress = 1;
+    this.updateRAGBadge();
+
+    try {
+      const chunks = await this.plugin.vaultRAGService.retrieveRelevantChunks(
+        draft,
+        this.getActiveFile()?.path,
+      );
+
+      if (requestId !== this.draftRAGPreviewRequestId) {
+        return;
+      }
+
+      const currentDraft = this.inputEl.value.trim();
+      if (!this.shouldPreviewDraftRAG(currentDraft) || currentDraft !== draft) {
+        return;
+      }
+
+      this.draftRAGPreviewPhase = "idle";
+      this.draftRAGPreviewProgress = 0;
+      this.previewRetrievedChunks = chunks;
+      this.updateRAGBadge();
+    } catch (error) {
+      if (requestId !== this.draftRAGPreviewRequestId) {
+        return;
+      }
+
+      console.error("Failed to refresh draft RAG preview:", error);
+      this.draftRAGPreviewPhase = "idle";
+      this.draftRAGPreviewProgress = 0;
+      this.previewRetrievedChunks = [];
+      this.updateRAGBadge();
+    }
+  }
+
+  private startDraftRAGPreviewWaitingState(): void {
+    this.stopDraftRAGPreviewTicking();
+    this.draftRAGPreviewPhase = "waiting";
+    this.draftRAGPreviewProgress = 0;
+    this.draftRAGPreviewStartedAt = Date.now();
+    this.previewRetrievedChunks = [];
+    this.updateRAGBadge();
+    this.draftRAGPreviewTickTimer = window.setInterval(() => {
+      const elapsed = Date.now() - this.draftRAGPreviewStartedAt;
+      this.draftRAGPreviewProgress = Math.max(0, Math.min(elapsed / DRAFT_RAG_PREVIEW_IDLE_MS, 1));
+      this.updateRAGBadge();
+      if (this.draftRAGPreviewProgress >= 1) {
+        this.stopDraftRAGPreviewTicking();
+      }
+    }, DRAFT_RAG_PREVIEW_TICK_MS);
+  }
+
+  private stopDraftRAGPreviewTicking(): void {
+    if (this.draftRAGPreviewTickTimer !== null) {
+      window.clearInterval(this.draftRAGPreviewTickTimer);
+      this.draftRAGPreviewTickTimer = null;
+    }
   }
 
   private async buildFileContextMessage(): Promise<ChatMessage | null> {
@@ -399,9 +594,6 @@ export class ChatView extends ItemView {
       this.getActiveFile()?.path,
     );
 
-    this.lastRetrievedChunks = chunks;
-    this.updateRAGBadge();
-
     if (chunks.length === 0) {
       return null;
     }
@@ -436,6 +628,12 @@ export class ChatView extends ItemView {
     this.messagesEl.querySelectorAll<HTMLButtonElement>(".oa-chat-edit-btn").forEach(btn => {
       btn.disabled = isBusy;
     });
+
+    if (isBusy) {
+      this.clearDraftRAGPreview();
+    } else {
+      this.scheduleDraftRAGPreview();
+    }
   }
 
   private runMessageCleanups(): void {
@@ -496,6 +694,8 @@ export class ChatView extends ItemView {
     if (!session) return;
 
     this.clearMessages();
+    this.inputEl.value = "";
+    this.clearDraftRAGPreview();
     this.messages = [...session.messages];
     this.currentSessionId = id;
     this.plugin.settings.activeSessionId = id;
@@ -513,6 +713,8 @@ export class ChatView extends ItemView {
     this.saveCurrentSession();
 
     this.clearMessages();
+    this.inputEl.value = "";
+    this.clearDraftRAGPreview();
     this.currentSessionId = null;
     this.plugin.settings.activeSessionId = null;
     void this.plugin.saveSettings();
@@ -1017,6 +1219,7 @@ export class ChatView extends ItemView {
     }
 
     this.inputEl.value = "";
+    this.clearDraftRAGPreview();
     const userMessage: ChatMessage = { role: ChatRole.User, content: text };
     await this.sendUserMessage(userMessage);
   }
