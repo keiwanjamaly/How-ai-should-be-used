@@ -1,3 +1,5 @@
+import type { ToolExecutionResult } from "./tools";
+
 /**
  * MCP (Model Context Protocol) type definitions
  * Based on the opencode MCP configuration format
@@ -56,29 +58,7 @@ export interface MCPTool {
 	inputSchema: unknown;
 }
 
-/**
- * Result from executing an MCP tool
- */
-export interface MCPToolResult {
-	/** Whether the execution was successful */
-	success: boolean;
-	/** Result content (for success) */
-	content?: string;
-	/** Error message (for failure) */
-	error?: string;
-	/** Structured execution details for UI/debugging */
-	call?: {
-		serverName: string;
-		toolName: string;
-		qualifiedToolName: string;
-		argumentsText: string;
-		durationMs: number;
-		startedAt: number;
-		success: boolean;
-		resultText?: string;
-		errorText?: string;
-	};
-}
+export type MCPToolResult = ToolExecutionResult;
 
 /**
  * MCP settings for the plugin

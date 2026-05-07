@@ -11,6 +11,11 @@ export interface DiffViewCallbacks {
 
 export class DiffView {
   private container: HTMLElement;
+  private headerEl!: HTMLElement;
+  private titleEl!: HTMLElement;
+  private statsEl!: HTMLElement;
+  private actionsEl!: HTMLElement;
+  private diffContainerEl!: HTMLElement;
   private oldContentEl!: HTMLElement;
   private newContentEl!: HTMLElement;
   private gutterEl!: HTMLElement;
@@ -18,7 +23,7 @@ export class DiffView {
 
   constructor(
     parent: HTMLElement,
-    private readonly diff: FileDiff,
+    private diff: FileDiff,
     callbacks: DiffViewCallbacks
   ) {
     this.callbacks = callbacks;
@@ -30,28 +35,22 @@ export class DiffView {
    * Build the diff view UI
    */
   private buildView(): void {
+    this.container.empty();
+
     // Header with file info and stats
-    const header = this.container.createDiv({ cls: "oa-diff-header" });
-    header.createEl("h3", { 
+    this.headerEl = this.container.createDiv({ cls: "oa-diff-header" });
+    this.titleEl = this.headerEl.createEl("h3", {
       text: this.diff.path,
-      cls: "oa-diff-title" 
-    });
-    
-    const stats = this.calculateStats();
-    const statsEl = header.createDiv({ cls: "oa-diff-stats" });
-    statsEl.createSpan({
-      text: `+${stats.added}`,
-      cls: "oa-diff-stats-text oa-diff-stat-added"
-    });
-    statsEl.createSpan({
-      text: `-${stats.removed}`,
-      cls: "oa-diff-stats-text oa-diff-stat-removed"
+      cls: "oa-diff-title"
     });
 
+    this.statsEl = this.headerEl.createDiv({ cls: "oa-diff-stats" });
+    this.renderStats();
+
     // Action buttons
-    const actions = header.createDiv({ cls: "oa-diff-actions" });
-    
-    const acceptBtn = actions.createEl("button", {
+    this.actionsEl = this.headerEl.createDiv({ cls: "oa-diff-actions" });
+
+    const acceptBtn = this.actionsEl.createEl("button", {
       cls: "mod-cta oa-diff-accept",
       text: "Accept All",
     });
@@ -59,7 +58,7 @@ export class DiffView {
       this.callbacks.onAccept(this.diff.newContent);
     });
 
-    const rejectBtn = actions.createEl("button", {
+    const rejectBtn = this.actionsEl.createEl("button", {
       cls: "oa-diff-reject",
       text: "Reject All",
     });
@@ -68,18 +67,18 @@ export class DiffView {
     });
 
     // Diff container
-    const diffContainer = this.container.createDiv({ cls: "oa-diff-container" });
+    this.diffContainerEl = this.container.createDiv({ cls: "oa-diff-container" });
 
     // Line numbers gutter
-    this.gutterEl = diffContainer.createDiv({ cls: "oa-diff-gutter" });
+    this.gutterEl = this.diffContainerEl.createDiv({ cls: "oa-diff-gutter" });
 
     // Old content panel (read-only view of original)
-    const oldPanel = diffContainer.createDiv({ cls: "oa-diff-panel oa-diff-old" });
+    const oldPanel = this.diffContainerEl.createDiv({ cls: "oa-diff-panel oa-diff-old" });
     oldPanel.createDiv({ cls: "oa-diff-panel-header", text: "Original" });
     this.oldContentEl = oldPanel.createDiv({ cls: "oa-diff-content" });
 
     // New content panel (editable view with changes)
-    const newPanel = diffContainer.createDiv({ cls: "oa-diff-panel oa-diff-new" });
+    const newPanel = this.diffContainerEl.createDiv({ cls: "oa-diff-panel oa-diff-new" });
     newPanel.createDiv({ cls: "oa-diff-panel-header", text: "Modified" });
     this.newContentEl = newPanel.createDiv({ cls: "oa-diff-content" });
 
@@ -91,6 +90,10 @@ export class DiffView {
    * Render the diff content line by line
    */
   private renderDiff(): void {
+    this.gutterEl.empty();
+    this.oldContentEl.empty();
+    this.newContentEl.empty();
+
     let oldLineNum = 1;
     let newLineNum = 1;
 
@@ -192,11 +195,35 @@ export class DiffView {
     return calculateDiffStats(this.diff);
   }
 
+  private renderStats(): void {
+    const stats = this.calculateStats();
+    this.statsEl.empty();
+    this.statsEl.createSpan({
+      text: `+${stats.added}`,
+      cls: "oa-diff-stats-text oa-diff-stat-added"
+    });
+    this.statsEl.createSpan({
+      text: `-${stats.removed}`,
+      cls: "oa-diff-stats-text oa-diff-stat-removed"
+    });
+  }
+
   /**
    * Get the container element
    */
   getContainer(): HTMLElement {
     return this.container;
+  }
+
+  getDiff(): FileDiff {
+    return this.diff;
+  }
+
+  setDiff(diff: FileDiff): void {
+    this.diff = diff;
+    this.titleEl.setText(diff.path);
+    this.renderStats();
+    this.renderDiff();
   }
 
   /**

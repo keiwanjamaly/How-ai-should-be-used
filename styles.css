@@ -316,6 +316,29 @@
   height: 12px;
 }
 
+.oa-chat-selection-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(100%, 360px);
+  font-size: 0.8rem;
+  color: var(--text-normal);
+  padding: 2px 8px 2px 6px;
+  background: color-mix(in srgb, var(--interactive-accent) 10%, var(--background-secondary));
+  border: 1px solid color-mix(in srgb, var(--interactive-accent) 28%, transparent);
+  border-radius: 999px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.oa-chat-selection-badge .svg-icon {
+  width: 12px;
+  height: 12px;
+  color: var(--interactive-accent);
+  flex: 0 0 auto;
+}
+
 .oa-chat-rag-badge {
   display: inline-flex;
   align-items: center;
@@ -453,6 +476,37 @@
 
 .oa-chat-apply-btn:active {
   transform: scale(0.98);
+}
+
+/* ===== Text Prompt Modal ===== */
+.oa-text-prompt-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.oa-text-prompt-description {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.oa-text-prompt-textarea {
+  min-height: 140px;
+  resize: vertical;
+  width: 100%;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  padding: 12px;
+  line-height: 1.5;
+}
+
+.oa-text-prompt-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 /* ===== Diff View Styles ===== */
@@ -704,6 +758,72 @@
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+
+.oa-diff-proposal-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.oa-diff-proposal-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--interactive-accent) 14%, var(--background-secondary));
+  color: var(--interactive-accent);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.oa-diff-proposal-description {
+  color: var(--text-normal);
+  font-size: 0.9rem;
+}
+
+.oa-diff-proposal-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.oa-diff-proposal-editor-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.oa-diff-proposal-editor-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.oa-diff-proposal-editor-meta {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.oa-diff-proposal-textarea {
+  width: 100%;
+  min-height: 180px;
+  resize: vertical;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  padding: 12px;
+  line-height: 1.55;
+  font-family: var(--font-monospace);
+  font-size: 0.85rem;
 }
 
 .oa-diff-modal-content {

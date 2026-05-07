@@ -1,7 +1,7 @@
-import type { ChatMessage, MCPCallEvent, OpenRouterSettings } from "../types";
+import type { ChatMessage, OpenRouterSettings } from "../types";
 import { ChatRole } from "../types";
 import type { LLMStrategy } from "./LLMStrategy";
-import type { MCPTool, MCPToolResult } from "../types/mcp";
+import type { ToolDefinition, ToolExecutionEvent, ToolExecutionResult } from "../types/tools";
 import { parseSSEStream } from "../utils/sseParser";
 
 interface OpenRouterErrorResponse {
@@ -50,7 +50,7 @@ export class OpenRouterStrategy implements LLMStrategy {
 
   constructor(
     private readonly config: OpenRouterSettings,
-    private readonly mcpTools: MCPTool[] = [],
+    private readonly tools: ToolDefinition[] = [],
     private readonly executeTool?: (toolName: string, args: unknown) => Promise<unknown>,
   ) {}
 
@@ -69,11 +69,11 @@ export class OpenRouterStrategy implements LLMStrategy {
   async sendMessage(
     messages: ChatMessage[],
     onChunk: (chunk: string) => void,
-    onMCPCall?: (call: MCPCallEvent) => void,
+    onToolEvent?: (call: ToolExecutionEvent) => void,
     signal?: AbortSignal,
   ): Promise<string> {
-    if (this.mcpTools.length > 0 && this.executeTool) {
-      return this.sendMessageWithTools(messages, onChunk, onMCPCall, signal);
+    if (this.tools.length > 0 && this.executeTool) {
+      return this.sendMessageWithTools(messages, onChunk, onToolEvent, signal);
     }
 
     const response = await fetch(this.endpoint, {
@@ -150,7 +150,7 @@ export class OpenRouterStrategy implements LLMStrategy {
   }
 
   private buildToolDefinitions(): OpenRouterToolDefinition[] {
-    return this.mcpTools.map((tool) => ({
+    return this.tools.map((tool) => ({
       type: "function",
       function: {
         name: tool.name,
@@ -174,7 +174,7 @@ export class OpenRouterStrategy implements LLMStrategy {
   private async sendMessageWithTools(
     messages: ChatMessage[],
     onChunk: (chunk: string) => void,
-    onMCPCall?: (call: MCPCallEvent) => void,
+    onToolEvent?: (call: ToolExecutionEvent) => void,
     signal?: AbortSignal,
   ): Promise<string> {
     const conversation = [...messages];
@@ -225,9 +225,9 @@ export class OpenRouterStrategy implements LLMStrategy {
 
       for (const toolCall of toolCalls) {
         const toolResult = await this.executeSingleToolCall(toolCall);
-        const mcpCall = toolResult.mcpCalls?.[0];
-        if (mcpCall && onMCPCall) {
-          onMCPCall(mcpCall);
+        const toolEvent = toolResult.toolEvents?.[0];
+        if (toolEvent && onToolEvent) {
+          onToolEvent(toolEvent);
         }
         conversation.push(toolResult);
       }
@@ -279,7 +279,8 @@ export class OpenRouterStrategy implements LLMStrategy {
         role: ChatRole.Tool,
         tool_call_id: toolCall.id,
         content: "Invalid tool arguments JSON",
-        mcpCalls: [{
+        toolEvents: [{
+          source: "provider",
           serverName: "unknown",
           toolName: toolCall.function.name,
           qualifiedToolName: toolCall.function.name,
@@ -293,13 +294,13 @@ export class OpenRouterStrategy implements LLMStrategy {
     }
 
     try {
-      const result = await this.executeTool?.(toolCall.function.name, args) as MCPToolResult | undefined;
+      const result = await this.executeTool?.(toolCall.function.name, args) as ToolExecutionResult | undefined;
       const content = this.stringifyToolResult(result);
       return {
         role: ChatRole.Tool,
         tool_call_id: toolCall.id,
         content,
-        mcpCalls: result?.call ? [result.call] : undefined,
+        toolEvents: result?.call ? [result.call] : undefined,
       };
     } catch (error) {
       return {
@@ -311,7 +312,7 @@ export class OpenRouterStrategy implements LLMStrategy {
   }
 
   private stringifyToolResult(result: unknown): string {
-    if (this.isMCPToolResult(result)) {
+    if (this.isToolExecutionResult(result)) {
       if (result.success) {
         return result.content ?? "";
       }
@@ -372,7 +373,7 @@ export class OpenRouterStrategy implements LLMStrategy {
     return complete;
   }
 
-  private isMCPToolResult(result: unknown): result is MCPToolResult {
+  private isToolExecutionResult(result: unknown): result is ToolExecutionResult {
     return typeof result === "object" && result !== null && "success" in result;
   }
 }

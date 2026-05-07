@@ -1,7 +1,8 @@
 import { Modal, App, Setting, Notice, TFile, ButtonComponent, setIcon } from "obsidian";
 import { DiffView } from "./DiffView";
 import { PendingDiff } from "../services/FileChangeDetector";
-import { DiffService } from "../services/DiffService";
+import { DiffService, type FileDiff } from "../services/DiffService";
+import type { ActiveNoteEditProposal } from "../types/tools";
 import { formatErrorMessage } from "../utils/errorUtils";
 
 export interface DiffModalResult {
@@ -13,50 +14,65 @@ export interface DiffModalResult {
 
 export type DiffModalCallback = (result: DiffModalResult) => void;
 
+export interface DiffModalOptions {
+  proposal?: ActiveNoteEditProposal;
+  conflictMode?: "warn" | "block";
+}
+
 export class DiffModal extends Modal {
   private diffView?: DiffView;
   private result: DiffModalResult = { action: "cancel" };
-  private callbacks: DiffModalCallback;
-  private diffService: DiffService;
+  private readonly callbacks: DiffModalCallback;
+  private readonly diffService: DiffService;
   private acceptedLines: Set<number> = new Set();
   private rejectedLines: Set<number> = new Set();
   private selectionMode = false;
   private statsEl?: HTMLElement;
   private applyBtn?: ButtonComponent;
+  private editableContentEl?: HTMLTextAreaElement;
+  private currentDiff: FileDiff;
+  private editRefreshTimer: number | null = null;
+  private readonly proposal?: ActiveNoteEditProposal;
+  private readonly conflictMode: "warn" | "block";
 
   constructor(
     app: App,
     private readonly pendingDiff: PendingDiff,
-    callbacks: DiffModalCallback
+    callbacks: DiffModalCallback,
+    options: DiffModalOptions = {},
   ) {
     super(app);
     this.callbacks = callbacks;
     this.diffService = new DiffService(app);
+    this.currentDiff = pendingDiff.diff;
+    this.proposal = options.proposal;
+    this.conflictMode = options.conflictMode ?? "warn";
   }
 
   onOpen(): void {
     const { contentEl } = this;
 
     contentEl.addClass("oa-diff-modal");
-    
-    // Title
     this.titleEl.setText(`Review Changes: ${this.pendingDiff.file.name}`);
 
-    // Info text
+    if (this.proposal) {
+      this.renderProposalSummary(contentEl);
+      this.renderProposalEditor(contentEl);
+    }
+
     const infoEl = contentEl.createDiv({ cls: "oa-diff-info" });
     const infoIcon = infoEl.createSpan({ cls: "oa-diff-info-icon" });
     setIcon(infoIcon, "info");
     infoEl.createSpan({
-      text: "Review the changes below. Toggle selection mode to cherry-pick individual changes, or use Accept All/Reject All buttons.",
+      text: this.proposal
+        ? "Review the proposed edits below. You can refine the modified content, cherry-pick line changes, or apply the current proposal."
+        : "Review the changes below. Toggle selection mode to cherry-pick individual changes, or use Accept All/Reject All buttons.",
     });
 
-    // Main content area for diff
     const diffContainer = contentEl.createDiv({ cls: "oa-diff-modal-content" });
-
-    // Create the diff view with granular callbacks
     this.diffView = new DiffView(
       diffContainer,
-      this.pendingDiff.diff,
+      this.currentDiff,
       {
         onAccept: (content) => this.handleAccept(content),
         onReject: () => this.handleReject(),
@@ -65,9 +81,7 @@ export class DiffModal extends Modal {
       }
     );
 
-    // Selection mode toggle
     const controlsEl = contentEl.createDiv({ cls: "oa-diff-controls" });
-    
     new Setting(controlsEl)
       .setName("Cherry-pick mode")
       .setDesc("Enable to selectively accept/reject individual changes")
@@ -79,22 +93,20 @@ export class DiffModal extends Modal {
         });
       });
 
-    // Selection stats
     this.statsEl = contentEl.createDiv({ cls: "oa-diff-selection-stats" });
     this.updateSelectionStats();
 
-    // Footer with action buttons
     const footer = contentEl.createDiv({ cls: "oa-diff-modal-footer" });
-    
     new Setting(footer)
-      .addButton((btn) =>
+      .addButton((btn) => {
         btn
-          .setButtonText("Accept All Changes")
+          .setButtonText(this.proposal ? "Apply Current Changes" : "Accept All Changes")
           .setCta()
           .onClick(() => {
-            this.handleAccept(this.pendingDiff.diff.newContent);
-          })
-      )
+            this.handleAccept(this.getCurrentProposedContent());
+          });
+        return btn;
+      })
       .addButton((btn) => {
         this.applyBtn = btn
           .setButtonText("Apply Selected")
@@ -104,6 +116,15 @@ export class DiffModal extends Modal {
             this.handleCherryPick();
           });
         return this.applyBtn;
+      })
+      .addButton((btn) => {
+        btn
+          .setButtonText("Reset Proposal")
+          .setDisabled(!this.proposal)
+          .onClick(() => {
+            this.resetProposal();
+          });
+        return btn;
       })
       .addButton((btn) =>
         btn
@@ -124,46 +145,85 @@ export class DiffModal extends Modal {
   onClose(): void {
     const { contentEl } = this;
     contentEl.empty();
-    
-    // Notify callback with result
+
+    if (this.editRefreshTimer !== null) {
+      window.clearTimeout(this.editRefreshTimer);
+      this.editRefreshTimer = null;
+    }
+
     this.callbacks(this.result);
   }
 
-  /**
-   * Toggle selection mode UI visibility
-   */
+  private renderProposalSummary(contentEl: HTMLElement): void {
+    if (!this.proposal) {
+      return;
+    }
+
+    const summaryEl = contentEl.createDiv({ cls: "oa-diff-proposal-summary" });
+    const badgeEl = summaryEl.createSpan({ cls: "oa-diff-proposal-badge" });
+    badgeEl.setText(this.proposal.scope === "selection" ? "Selection edit" : "Note edit");
+
+    summaryEl.createSpan({
+      cls: "oa-diff-proposal-description",
+      text: this.proposal.description,
+    });
+  }
+
+  private renderProposalEditor(contentEl: HTMLElement): void {
+    if (!this.proposal) {
+      return;
+    }
+
+    const editorSection = contentEl.createDiv({ cls: "oa-diff-proposal-editor" });
+    const headerEl = editorSection.createDiv({ cls: "oa-diff-proposal-editor-header" });
+    headerEl.createDiv({ cls: "oa-diff-proposal-editor-title", text: "Modified content" });
+    headerEl.createDiv({
+      cls: "oa-diff-proposal-editor-meta",
+      text: "Edit this version before applying. The diff below updates automatically.",
+    });
+
+    this.editableContentEl = editorSection.createEl("textarea", {
+      cls: "oa-diff-proposal-textarea",
+    });
+    this.editableContentEl.value = this.proposal.proposedContent;
+    this.editableContentEl.addEventListener("input", () => {
+      this.scheduleDiffRefresh();
+    });
+  }
+
   private updateSelectionUI(): void {
-    // Add/remove class to show/hide individual line action buttons
     const diffView = this.diffView?.getContainer();
     if (diffView) {
       diffView.toggleClass("oa-diff-selection-mode", this.selectionMode);
     }
   }
 
-  /**
-   * Update the selection statistics display
-   */
   private updateSelectionStats(): void {
     if (!this.statsEl) return;
-    
+
     this.statsEl.empty();
     const accepted = this.acceptedLines.size;
     const rejected = this.rejectedLines.size;
-    
+
     if (accepted > 0 || rejected > 0) {
       this.statsEl.createEl("span", {
         text: `Selected: ${accepted} accepted, ${rejected} rejected`,
         cls: "oa-diff-stats-text",
       });
+      return;
     }
+
+    this.statsEl.createEl("span", {
+      text: this.proposal
+        ? "No cherry-pick selections yet. You can also edit the proposed content directly above."
+        : "No cherry-pick selections yet.",
+      cls: "oa-diff-stats-text",
+    });
   }
 
-  /**
-   * Handle accepting a specific line
-   */
   private handleAcceptLine(lineNumber: number): void {
     if (!this.selectionMode) return;
-    
+
     if (this.rejectedLines.has(lineNumber)) {
       this.rejectedLines.delete(lineNumber);
     }
@@ -172,20 +232,14 @@ export class DiffModal extends Modal {
     // Update visual state
     this.diffView?.markLineAccepted(lineNumber, "added");
     this.diffView?.markLineAccepted(lineNumber, "removed");
-    
-    // Update UI
+
     this.updateSelectionStats();
-    
-    // Enable the Apply Selected button
     this.updateApplyButtonState();
   }
 
-  /**
-   * Handle rejecting a specific line
-   */
   private handleRejectLine(lineNumber: number): void {
     if (!this.selectionMode) return;
-    
+
     if (this.acceptedLines.has(lineNumber)) {
       this.acceptedLines.delete(lineNumber);
     }
@@ -194,17 +248,11 @@ export class DiffModal extends Modal {
     // Update visual state
     this.diffView?.markLineRejected(lineNumber, "added");
     this.diffView?.markLineRejected(lineNumber, "removed");
-    
-    // Update UI
+
     this.updateSelectionStats();
-    
-    // Enable the Apply Selected button
     this.updateApplyButtonState();
   }
 
-  /**
-   * Update the Apply Selected button state
-   */
   private updateApplyButtonState(): void {
     const hasSelections = this.acceptedLines.size > 0 || this.rejectedLines.size > 0;
     if (this.applyBtn) {
@@ -212,23 +260,61 @@ export class DiffModal extends Modal {
     }
   }
 
-  /**
-   * Handle cherry-picking (applying only selected changes)
-   */
+  private getCurrentProposedContent(): string {
+    return this.editableContentEl?.value ?? this.currentDiff.newContent;
+  }
+
+  private scheduleDiffRefresh(): void {
+    if (this.editRefreshTimer !== null) {
+      window.clearTimeout(this.editRefreshTimer);
+    }
+
+    this.editRefreshTimer = window.setTimeout(() => {
+      this.editRefreshTimer = null;
+      this.refreshDiffFromEditedContent();
+    }, 200);
+  }
+
+  private refreshDiffFromEditedContent(): void {
+    const nextDiff = this.diffService.createFileDiff(
+      this.currentDiff.path,
+      this.pendingDiff.diff.oldContent,
+      this.getCurrentProposedContent(),
+    );
+
+    this.currentDiff = nextDiff;
+    this.clearSelections();
+    this.diffView?.setDiff(nextDiff);
+    this.updateSelectionUI();
+  }
+
+  private clearSelections(): void {
+    this.acceptedLines = new Set();
+    this.rejectedLines = new Set();
+    this.updateSelectionStats();
+    this.updateApplyButtonState();
+  }
+
+  private resetProposal(): void {
+    if (!this.proposal || !this.editableContentEl) {
+      return;
+    }
+
+    this.editableContentEl.value = this.proposal.proposedContent;
+    this.refreshDiffFromEditedContent();
+  }
+
   private async handleCherryPick(): Promise<void> {
     try {
-      // Generate the content with only selected changes applied
       const result = this.diffService.generateCherryPickResult(
-        this.pendingDiff.diff,
+        this.currentDiff,
         this.acceptedLines,
         this.rejectedLines
       );
 
-      // Check for conflicts
-      const currentContent = await this.app.vault.read(this.pendingDiff.file);
-      if (currentContent !== this.pendingDiff.diff.oldContent && 
-          currentContent !== this.pendingDiff.diff.newContent) {
-        this.showConflictWarning(result.content);
+      const currentContent = await this.app.vault.cachedRead(this.pendingDiff.file);
+      if (this.hasConflictingChanges(currentContent)) {
+        this.handleConflict(result.content, "cherry-pick");
         return;
       }
 
@@ -238,7 +324,7 @@ export class DiffModal extends Modal {
         acceptedLines: this.acceptedLines,
         rejectedLines: this.rejectedLines,
       };
-      
+
       new Notice(`Applied ${result.stats.modified} changes (${result.stats.kept} lines kept, ${result.stats.removed} removed)`);
       this.close();
     } catch (error) {
@@ -246,17 +332,11 @@ export class DiffModal extends Modal {
     }
   }
 
-  /**
-   * Handle accepting all changes
-   */
   private async handleAccept(content: string): Promise<void> {
     try {
-      // Check if file has been modified since diff was created
-      const currentContent = await this.app.vault.read(this.pendingDiff.file);
-      if (currentContent !== this.pendingDiff.diff.newContent && 
-          currentContent !== this.pendingDiff.diff.oldContent) {
-        // File changed, show warning
-        this.showConflictWarning(content);
+      const currentContent = await this.app.vault.cachedRead(this.pendingDiff.file);
+      if (this.hasConflictingChanges(currentContent)) {
+        this.handleConflict(content, "accept");
         return;
       }
 
@@ -267,9 +347,6 @@ export class DiffModal extends Modal {
     }
   }
 
-  /**
-   * Handle rejecting all changes
-   */
   private async handleReject(): Promise<void> {
     try {
       this.result = { action: "reject" };
@@ -279,13 +356,28 @@ export class DiffModal extends Modal {
     }
   }
 
-  /**
-   * Show conflict warning when file has been modified
-   */
-  private showConflictWarning(content: string): void {
+  private hasConflictingChanges(currentContent: string): boolean {
+    if (this.conflictMode === "block") {
+      return currentContent !== this.pendingDiff.diff.oldContent;
+    }
+
+    return currentContent !== this.pendingDiff.diff.newContent
+      && currentContent !== this.pendingDiff.diff.oldContent;
+  }
+
+  private handleConflict(content: string, action: "accept" | "cherry-pick"): void {
+    if (this.conflictMode === "block") {
+      new Notice("This note changed since the proposal was created. Reopen and regenerate the proposal.");
+      return;
+    }
+
+    this.showConflictWarning(content, action);
+  }
+
+  private showConflictWarning(content: string, action: "accept" | "cherry-pick"): void {
     const conflictModal = new Modal(this.app);
     conflictModal.titleEl.setText("File Has Changed");
-    
+
     conflictModal.contentEl.createEl("p", {
       text: "This file was modified since the diff was generated. Proceeding will overwrite those changes.",
     });
@@ -297,8 +389,7 @@ export class DiffModal extends Modal {
           .setWarning()
           .onClick(() => {
             conflictModal.close();
-            // Determine which action to preserve
-            if (this.result.action === "cherry-pick") {
+            if (action === "cherry-pick") {
               this.result = {
                 action: "cherry-pick",
                 content,

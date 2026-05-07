@@ -372,6 +372,7 @@ export class MCPService {
 				success: false,
 				error: `Tool "${qualifiedToolName}" not found`,
 				call: {
+					source: "mcp",
 					serverName: "unknown",
 					toolName: qualifiedToolName,
 					qualifiedToolName,
@@ -427,6 +428,7 @@ export class MCPService {
 				success: true,
 				content: output,
 				call: {
+					source: "mcp",
 					serverName: toolInfo.serverName,
 					toolName: toolInfo.toolName,
 					qualifiedToolName,
@@ -443,6 +445,7 @@ export class MCPService {
 				success: false,
 				error: message,
 				call: {
+					source: "mcp",
 					serverName: toolInfo.serverName,
 					toolName: toolInfo.toolName,
 					qualifiedToolName,

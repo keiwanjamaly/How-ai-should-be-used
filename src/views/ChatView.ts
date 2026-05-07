@@ -1,11 +1,8 @@
 import { ItemView, MarkdownRenderer, Notice, WorkspaceLeaf, TFile, setIcon } from "obsidian";
 import type ObsidianAIChatPlugin from "../main";
 import type { LLMStrategy } from "../strategies/LLMStrategy";
-import { ChatRole, type ChatMessage, type ChatSession, type MCPCallEvent } from "../types";
-import { FileChangeParser, type DetectedFileChange } from "../services/FileChangeParser";
-import type { FileDiff } from "../services/DiffService";
-import { DiffModal } from "../components/DiffModal";
-import { handleDiffResult } from "../utils/diffResultHandler";
+import { ChatRole, type ChatMessage, type ChatSession } from "../types";
+import type { ActiveNoteEditProposal, ToolExecutionEvent } from "../types/tools";
 import { formatErrorMessage } from "../utils/errorUtils";
 import type { VaultChunk } from "../services/VaultRAGService";
 
@@ -20,6 +17,7 @@ export class ChatView extends ItemView {
   private newChatButtonEl!: HTMLButtonElement;
   private contextToggleEl!: HTMLButtonElement;
   private contextBadgeEl!: HTMLDivElement;
+  private selectionBadgeEl!: HTMLDivElement;
   private ragBadgeEl!: HTMLDivElement;
   private sessionSelectorEl!: HTMLSelectElement;
   private currentSessionId: string | null = null;
@@ -33,8 +31,6 @@ export class ChatView extends ItemView {
   private includeFileContext = true;
   private selectedModel: string = "";
   private modelSelectorEl!: HTMLSelectElement;
-  private fileChangeParser: FileChangeParser;
-  private detectedAIFileChange: DetectedFileChange | null = null;
   private messageWrappers = new Map<ChatMessage, HTMLDivElement>();
   private messageCleanupMap = new Map<ChatMessage, () => void>();
   private messageRenderState = new WeakMap<HTMLDivElement, { rendering: boolean; pending: boolean; message: ChatMessage }>();
@@ -45,7 +41,6 @@ export class ChatView extends ItemView {
     private readonly plugin: ObsidianAIChatPlugin,
   ) {
     super(leaf);
-    this.fileChangeParser = new FileChangeParser(this.app);
   }
 
   getViewType(): string {
@@ -80,6 +75,7 @@ export class ChatView extends ItemView {
       attr: { title: "Select model", "aria-label": "Select model" },
     });
     this.refreshModelSelector();
+    this.preserveMarkdownContextOnPointerDown(this.modelSelectorEl);
     this.modelSelectorEl.addEventListener("change", () => {
       this.selectedModel = this.modelSelectorEl.value;
     });
@@ -92,6 +88,7 @@ export class ChatView extends ItemView {
       },
     });
     setIcon(this.contextToggleEl, "paperclip");
+    this.preserveMarkdownContextOnPointerDown(this.contextToggleEl);
     this.contextToggleEl.addEventListener("click", () => this.toggleFileContext());
     this.updateContextToggleState();
 
@@ -99,6 +96,7 @@ export class ChatView extends ItemView {
       cls: "oa-chat-session-selector",
       attr: { title: "Switch conversation", "aria-label": "Switch conversation" },
     });
+    this.preserveMarkdownContextOnPointerDown(this.sessionSelectorEl);
     this.sessionSelectorEl.addEventListener("change", () => {
       const id = this.sessionSelectorEl.value;
       if (id && id !== this.currentSessionId) {
@@ -111,6 +109,7 @@ export class ChatView extends ItemView {
       attr: { title: "New conversation", "aria-label": "New conversation" },
     });
     setIcon(this.newChatButtonEl, "plus");
+    this.preserveMarkdownContextOnPointerDown(this.newChatButtonEl);
     this.newChatButtonEl.addEventListener("click", () => this.startNewChat());
 
     this.messagesEl = root.createDiv({ cls: "oa-chat-messages" });
@@ -121,6 +120,9 @@ export class ChatView extends ItemView {
 
     this.contextBadgeEl = badgesRow.createDiv({ cls: "oa-chat-context-badge" });
     this.updateContextBadge();
+
+    this.selectionBadgeEl = badgesRow.createDiv({ cls: "oa-chat-selection-badge" });
+    this.updateSelectionBadge();
 
     this.ragBadgeEl = badgesRow.createDiv({ cls: "oa-chat-rag-badge" });
     this.updateRAGBadge();
@@ -145,6 +147,7 @@ export class ChatView extends ItemView {
       cls: "oa-chat-input",
       attr: { placeholder: "Ask something...", rows: "3" },
     });
+    this.preserveMarkdownContextOnPointerDown(this.inputEl);
     this.inputEl.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
@@ -159,6 +162,7 @@ export class ChatView extends ItemView {
       attr: { title: "Upload PDF for context", "aria-label": "Upload PDF" },
     });
     setIcon(this.pdfUploadBtnEl, "file-up");
+    this.preserveMarkdownContextOnPointerDown(this.pdfUploadBtnEl);
     this.pdfUploadBtnEl.addEventListener("click", () => {
       this.pdfFileInputEl.click();
     });
@@ -168,6 +172,7 @@ export class ChatView extends ItemView {
       attr: { title: "Stop generation", "aria-label": "Stop generation" },
     });
     setIcon(this.stopButtonEl, "square");
+    this.preserveMarkdownContextOnPointerDown(this.stopButtonEl);
     this.stopButtonEl.addEventListener("click", () => this.stopGeneration());
 
     this.sendButtonEl = controls.createEl("button", {
@@ -175,6 +180,7 @@ export class ChatView extends ItemView {
       attr: { title: "Send message", "aria-label": "Send message" },
     });
     setIcon(this.sendButtonEl, "send-horizontal");
+    this.preserveMarkdownContextOnPointerDown(this.sendButtonEl);
     this.sendButtonEl.addEventListener("click", () => { void this.handleSend(); });
 
     this.updateProviderControls();
@@ -183,12 +189,16 @@ export class ChatView extends ItemView {
     // Listen for active file changes
     this.registerEvent(
       this.app.workspace.on("active-leaf-change", () => {
+        this.plugin.internalToolService.captureMarkdownViewContext();
         this.updateContextBadge();
+        this.updateSelectionBadge();
       })
     );
 
+    this.plugin.internalToolService.captureMarkdownViewContext();
+    this.updateSelectionBadge();
     this.restoreLastSession();
-    await this.refreshProviderModels();
+    void this.refreshProviderModels();
   }
 
   async onClose(): Promise<void> {
@@ -245,16 +255,27 @@ export class ChatView extends ItemView {
       return;
     }
 
-    const previousSelection = this.selectedModel;
-    const models = await this.plugin.refreshCodexModels(false);
-    if (!models.includes(previousSelection)) {
-      this.selectedModel = this.plugin.getDefaultModel();
+    try {
+      const models = await this.plugin.refreshCodexModels(false);
+      if (!models.includes(this.selectedModel)) {
+        this.selectedModel = this.plugin.getDefaultModel();
+      }
+    } catch {
+      // Keep the cached/default selector state if the background refresh fails.
     }
+
     this.refreshModelSelector();
   }
 
   private getActiveFile(): TFile | null {
     return this.app.workspace.getActiveFile();
+  }
+
+  private preserveMarkdownContextOnPointerDown(element: HTMLElement): void {
+    element.addEventListener("pointerdown", () => {
+      this.plugin.internalToolService.captureMarkdownViewContext();
+      this.updateSelectionBadge();
+    });
   }
 
   private updateContextBadge(): void {
@@ -275,6 +296,42 @@ export class ChatView extends ItemView {
       this.contextBadgeEl.empty();
       this.contextBadgeEl.hide();
     }
+  }
+
+  private updateSelectionBadge(): void {
+    this.selectionBadgeEl.empty();
+
+    if (!this.includeFileContext) {
+      this.selectionBadgeEl.hide();
+      return;
+    }
+
+    const selection = this.plugin.internalToolService.getActiveSelectionContext();
+    if (!selection) {
+      this.selectionBadgeEl.hide();
+      return;
+    }
+
+    const badgeIcon = this.selectionBadgeEl.createSpan({ cls: "oa-chat-selection-badge-icon" });
+    setIcon(badgeIcon, "quote-glyph");
+
+    const preview = this.summarizeSelection(selection.selectedText);
+    const lineRange = `${selection.from.line + 1}:${selection.from.ch}-${selection.to.line + 1}:${selection.to.ch}`;
+    this.selectionBadgeEl.createSpan({ text: `Selection: ${preview}` });
+    this.selectionBadgeEl.setAttr(
+      "title",
+      `Cached selection ${lineRange}\n\n${selection.selectedText}`,
+    );
+    this.selectionBadgeEl.show();
+  }
+
+  private summarizeSelection(text: string): string {
+    const singleLine = text.replace(/\s+/g, " ").trim();
+    if (singleLine.length <= 48) {
+      return singleLine;
+    }
+
+    return `${singleLine.slice(0, 45)}...`;
   }
 
   private updateRAGBadge(): void {
@@ -313,7 +370,18 @@ export class ChatView extends ItemView {
 
     try {
       const content = await this.app.vault.cachedRead(file);
-      const contextContent = `The user has the following note open ("${file.name}"):\n---\n${content}\n---\nRefer to this note when answering the user's questions.`;
+      const selection = this.plugin.internalToolService.getActiveSelectionContext();
+      const selectionContext = selection
+        ? [
+          "",
+          `The user currently has this text selected (${selection.from.line + 1}:${selection.from.ch} to ${selection.to.line + 1}:${selection.to.ch}):`,
+          "---",
+          selection.selectedText,
+          "---",
+          "If the user asks to replace only that part, prefer a selection replacement instead of rewriting the whole note.",
+        ].join("\n")
+        : "";
+      const contextContent = `The user has the following note open ("${file.name}"):\n---\n${content}\n---\nRefer to this note when answering the user's questions.${selectionContext}`;
 
       return {
         role: ChatRole.System,
@@ -387,7 +455,6 @@ export class ChatView extends ItemView {
     this.messages = [];
     this.messagesEl.empty();
     this.runMessageCleanups();
-    this.detectedAIFileChange = null;
   }
 
   private saveCurrentSession(): void {
@@ -625,8 +692,13 @@ export class ChatView extends ItemView {
           contentEl.setText(message.content);
         }
 
-        if (message.mcpCalls?.length) {
-          this.renderMCPCalls(contentEl, message.mcpCalls);
+        const toolEvents = message.toolEvents ?? message.mcpCalls;
+        if (toolEvents?.length) {
+          this.renderToolEvents(contentEl, toolEvents);
+        }
+
+        if (message.editProposal) {
+          this.renderProposalAction(contentEl, message.editProposal);
         }
       }
     } finally {
@@ -643,10 +715,10 @@ export class ChatView extends ItemView {
       .replace(/\\\(([^]+?)\\\)/g, (_match, math: string) => `$${math.trim()}$`);
   }
 
-  private renderMCPCalls(contentEl: HTMLDivElement, calls: MCPCallEvent[]): void {
+  private renderToolEvents(contentEl: HTMLDivElement, calls: ToolExecutionEvent[]): void {
     const callsEl = contentEl.createDiv({ cls: "oa-chat-mcp-calls" });
     const titleEl = callsEl.createDiv({ cls: "oa-chat-mcp-title" });
-    titleEl.setText(calls.length === 1 ? "1 MCP call" : `${calls.length} MCP calls`);
+    titleEl.setText(calls.length === 1 ? "1 tool call" : `${calls.length} tool calls`);
 
     for (const call of calls) {
       const callEl = callsEl.createDiv({ cls: "oa-chat-mcp-call" });
@@ -660,7 +732,7 @@ export class ChatView extends ItemView {
       });
       summaryEl.createSpan({
         cls: "oa-chat-mcp-tool",
-        text: `${call.serverName} -> ${call.toolName}`,
+        text: `${call.source === "internal" ? "internal" : call.serverName} -> ${call.toolName}`,
       });
       summaryEl.createSpan({
         cls: "oa-chat-mcp-duration",
@@ -688,86 +760,28 @@ export class ChatView extends ItemView {
     blockEl.createEl("pre", { cls: "oa-chat-mcp-detail-text", text: text || "No data" });
   }
 
-  /**
-   * Detect and handle file modification proposals from AI
-   */
-  private async detectAndHandleFileChange(
-    messageEl: HTMLDivElement,
-    response: string
-  ): Promise<void> {
-    const activeFile = this.getActiveFile();
-    if (!activeFile) return;
+  private renderProposalAction(
+    contentEl: HTMLDivElement,
+    proposal: ActiveNoteEditProposal,
+  ): void {
+    const actionsEl = contentEl.createDiv({ cls: "oa-chat-message-actions" });
+    const applyBtn = actionsEl.createEl("button", {
+      cls: "mod-cta oa-chat-apply-btn",
+      attr: {
+        title: "Review changes in diff view and apply selectively",
+      },
+    });
+    const applyIcon = applyBtn.createSpan({ cls: "oa-chat-apply-btn-icon" });
+    setIcon(applyIcon, "file-diff");
+    applyBtn.createSpan({ text: "Review & Apply Changes" });
 
-    if (!this.fileChangeParser.hasFileModification(response)) return;
-
-    const detectedChange = this.fileChangeParser.parseAIResponse(response, activeFile);
-    if (!detectedChange) return;
-
-    try {
-      const currentContent = await this.app.vault.read(activeFile);
-      detectedChange.originalContent = currentContent;
-      this.detectedAIFileChange = detectedChange;
-
-      const actionsEl = messageEl.createDiv({ cls: "oa-chat-message-actions" });
-
-      const applyBtn = actionsEl.createEl("button", {
-        cls: "mod-cta oa-chat-apply-btn",
-        attr: {
-          title: "Review changes in diff view and apply selectively",
-        },
-      });
-      const applyIcon = applyBtn.createSpan({ cls: "oa-chat-apply-btn-icon" });
-      setIcon(applyIcon, "file-diff");
-      applyBtn.createSpan({ text: "Review & Apply Changes" });
-
-
-      applyBtn.addEventListener("click", () => {
-        void this.showDiffForChanges(detectedChange);
-      });
-
-      new Notice("AI proposed file changes - click 'Review & Apply Changes' to review");
-    } catch (error) {
-      console.error("Failed to read file for change detection:", error);
-    }
+    applyBtn.addEventListener("click", () => {
+      void this.showDiffForProposal(proposal);
+    });
   }
 
-  /**
-   * Show diff modal for AI-proposed changes
-   */
-  private async showDiffForChanges(change: DetectedFileChange): Promise<void> {
-    const { diffService } = this.plugin;
-
-
-    const fileDiff: FileDiff = diffService.createFileDiff(
-      change.file.path,
-      change.originalContent,
-      change.proposedContent
-    );
-
-    if (!diffService.hasChanges(fileDiff)) {
-      new Notice("No changes detected in AI response");
-      return;
-    }
-
-    const pendingDiff = {
-      file: change.file,
-      diff: fileDiff,
-      timestamp: Date.now(),
-    };
-
-    const clearState = () => {
-      this.detectedAIFileChange = null;
-    };
-
-    new DiffModal(this.app, pendingDiff, async (result) => {
-      await handleDiffResult(
-        result,
-        change.file,
-        diffService,
-        (path) => this.plugin.markAsSelfModified(path),
-        { onApplied: clearState, onRejected: clearState },
-      );
-    }).open();
+  private async showDiffForProposal(proposal: ActiveNoteEditProposal): Promise<void> {
+    await this.plugin.openEditReview(proposal, { source: "chat" });
   }
 
   /**
@@ -783,6 +797,11 @@ export class ChatView extends ItemView {
         content: systemPrompt,
       });
     }
+
+    requestMessages.push({
+      role: ChatRole.System,
+      content: this.plugin.internalToolService.getToolUseInstruction(),
+    });
 
     const fileContext = await this.buildFileContextMessage();
     if (fileContext) {
@@ -827,10 +846,16 @@ export class ChatView extends ItemView {
           this.renderMessageContent(assistantContentEl, assistantMessage);
           this.messagesEl.scrollTo({ top: this.messagesEl.scrollHeight });
         },
-        (call: MCPCallEvent) => {
-          assistantMessage.mcpCalls = [...(assistantMessage.mcpCalls ?? []), call];
+        (call: ToolExecutionEvent) => {
+          assistantMessage.toolEvents = [...(assistantMessage.toolEvents ?? []), call];
+          if (call.editProposal) {
+            assistantMessage.editProposal = call.editProposal;
+          }
           this.renderMessageContent(assistantContentEl, assistantMessage);
           this.messagesEl.scrollTo({ top: this.messagesEl.scrollHeight });
+          if (call.editProposal) {
+            new Notice("AI proposed file changes - click 'Review & Apply Changes' to review");
+          }
         },
         this.currentAbortController.signal,
       );
@@ -847,8 +872,6 @@ export class ChatView extends ItemView {
     } finally {
       this.currentAbortController = null;
       this.updateBusyState(false);
-
-      await this.detectAndHandleFileChange(assistantContentEl, assistantMessage.content);
     }
   }
 
@@ -985,6 +1008,8 @@ export class ChatView extends ItemView {
     if (this.busy) {
       return;
     }
+
+    this.plugin.internalToolService.captureMarkdownViewContext();
 
     const text = this.inputEl.value.trim();
     if (!text) {

@@ -1,5 +1,6 @@
 import type { MCPSettings } from "./types/mcp";
 import { DEFAULT_MCP_SETTINGS } from "./types/mcp";
+import type { ActiveNoteEditProposal, ToolExecutionEvent } from "./types/tools";
 
 export enum ChatRole {
   System = "system",
@@ -8,28 +9,18 @@ export enum ChatRole {
   Tool = "tool",
 }
 
-export interface MCPCallEvent {
-  serverName: string;
-  toolName: string;
-  qualifiedToolName: string;
-  argumentsText: string;
-  durationMs: number;
-  startedAt: number;
-  success: boolean;
-  resultText?: string;
-  errorText?: string;
-}
-
 export interface ChatMessage {
   role: ChatRole;
   content: string;
-  mcpCalls?: MCPCallEvent[];
+  toolEvents?: ToolExecutionEvent[];
+  mcpCalls?: ToolExecutionEvent[];
   tool_calls?: Array<{
     id: string;
     type: "function";
     function: { name: string; arguments: string };
   }>;
   tool_call_id?: string;
+  editProposal?: ActiveNoteEditProposal;
 }
 
 export interface OpenRouterSettings {

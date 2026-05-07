@@ -1,7 +1,8 @@
 import type { ChatGPTSettings, ChatMessage } from "../types";
-import type { MCPCallEvent } from "../types";
 import { getCodexLoginStatus, runCodexExec } from "../services/CodexCli";
+import type { InternalToolService } from "../services/InternalToolService";
 import type { MCPServers } from "../types/mcp";
+import type { ToolExecutionEvent } from "../types/tools";
 import type { LLMStrategy } from "./LLMStrategy";
 
 export class CodexCliStrategy implements LLMStrategy {
@@ -10,6 +11,7 @@ export class CodexCliStrategy implements LLMStrategy {
   constructor(
     private readonly config: ChatGPTSettings,
     private readonly mcpServers: MCPServers = {},
+    private readonly internalToolService?: InternalToolService,
   ) {}
 
   async validateConfig(signal?: AbortSignal): Promise<string | null> {
@@ -32,7 +34,7 @@ export class CodexCliStrategy implements LLMStrategy {
   async sendMessage(
     messages: ChatMessage[],
     onChunk: (chunk: string) => void,
-    _onMCPCall?: (call: MCPCallEvent) => void,
+    onToolEvent?: (call: ToolExecutionEvent) => void,
     signal?: AbortSignal,
   ): Promise<string> {
     const prompt = this.serializeMessages(messages);
@@ -44,16 +46,31 @@ export class CodexCliStrategy implements LLMStrategy {
       signal,
     });
 
+    const structuredResponse = await this.internalToolService?.parseCodexEditResponse(response);
+    if (structuredResponse) {
+      if (structuredResponse.toolResult.call && onToolEvent) {
+        onToolEvent(structuredResponse.toolResult.call);
+      }
+      onChunk(structuredResponse.message);
+      return structuredResponse.message;
+    }
+
     onChunk(response);
     return response;
   }
 
   private serializeMessages(messages: ChatMessage[]): string {
-    return messages
+    const serializedMessages = messages
       .map((message) => {
         const role = message.role.toUpperCase();
         return `${role}:\n${message.content}`;
-      })
-      .join("\n\n");
+      });
+
+    const instruction = this.internalToolService?.getCodexPromptInstruction().trim();
+    if (instruction) {
+      serializedMessages.unshift(`SYSTEM:\n${instruction}`);
+    }
+
+    return serializedMessages.join("\n\n");
   }
 }
