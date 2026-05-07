@@ -1,4 +1,5 @@
 build/
+dev-plugin/
 node_modules/
 .claude/worktrees/
 main.js

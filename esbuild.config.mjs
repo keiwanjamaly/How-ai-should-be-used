@@ -1,6 +1,8 @@
 import esbuild from "esbuild";
 import process from "process";
+import { copyFileSync, mkdirSync, watch } from "node:fs";
 import { builtinModules } from "node:module";
+import { join } from "node:path";
 
 const banner =
   "/*\n" +
@@ -9,6 +11,37 @@ const banner =
   "*/";
 
 const prod = process.argv[2] === "production";
+const devPluginDir = "dev-plugin";
+const devPluginAssets = ["manifest.json", "styles.css"];
+
+function syncDevPluginAsset(relativePath) {
+  copyFileSync(relativePath, join(devPluginDir, relativePath));
+  console.log(`[dev-plugin] synced ${relativePath}`);
+}
+
+function syncDevPluginAssets() {
+  mkdirSync(devPluginDir, { recursive: true });
+  for (const asset of devPluginAssets) {
+    syncDevPluginAsset(asset);
+  }
+}
+
+function watchDevPluginAssets() {
+  for (const asset of devPluginAssets) {
+    watch(asset, () => {
+      try {
+        syncDevPluginAsset(asset);
+      } catch (error) {
+        console.error(`[dev-plugin] failed to sync ${asset}:`, error);
+      }
+    });
+  }
+}
+
+if (!prod) {
+  syncDevPluginAssets();
+  watchDevPluginAssets();
+}
 
 const context = await esbuild.context({
   banner: {
@@ -40,7 +73,7 @@ const context = await esbuild.context({
   loader: {
     ".wasm": "binary",
   },
-  outfile: "main.js",
+  outfile: prod ? "main.js" : `${devPluginDir}/main.js`,
   minify: prod,
 });
 
