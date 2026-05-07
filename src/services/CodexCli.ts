@@ -276,6 +276,8 @@ export async function runCodexExec({
     "--ephemeral",
     "--json",
     "--skip-git-repo-check",
+    "--ignore-user-config",
+    "--ignore-rules",
     "--sandbox",
     "read-only",
     "--color",

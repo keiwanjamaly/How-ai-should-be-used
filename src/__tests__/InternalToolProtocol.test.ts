@@ -54,6 +54,10 @@ function testParseCodexEditEnvelopeRejectsMarkdownWrappedJson(): void {
 function testBuildCodexEditInstruction(): void {
   const instruction = buildCodexEditInstruction();
   assertTrue(
+    instruction.includes("conversational assistant inside Obsidian"),
+    "Instruction should frame Codex as a conversational assistant",
+  );
+  assertTrue(
     instruction.includes("active_note_replacement"),
     "Instruction should describe the JSON envelope",
   );
@@ -64,6 +68,10 @@ function testBuildCodexEditInstruction(): void {
   assertTrue(
     instruction.includes("active_selection_replacement"),
     "Instruction should describe the selection replacement envelope",
+  );
+  assertTrue(
+    instruction.includes("never return the JSON envelope"),
+    "Instruction should reserve JSON output for explicit edit requests",
   );
 }
 
