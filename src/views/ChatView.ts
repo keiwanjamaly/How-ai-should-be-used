@@ -810,15 +810,17 @@ export class ChatView extends ItemView {
 
   private renderToolEvents(contentEl: HTMLDivElement, calls: ToolExecutionEvent[]): void {
     const callsEl = contentEl.createDiv({ cls: "oa-chat-mcp-calls" });
-    const titleEl = callsEl.createDiv({ cls: "oa-chat-mcp-title" });
-    titleEl.setText(calls.length === 1 ? "1 tool call" : `${calls.length} tool calls`);
+    if (calls.length > 1) {
+      const titleEl = callsEl.createDiv({ cls: "oa-chat-mcp-title" });
+      titleEl.setText(`${calls.length} tool calls`);
+    }
 
     for (const call of calls) {
-      const callEl = callsEl.createDiv({ cls: "oa-chat-mcp-call" });
+      const callEl = callsEl.createEl("details", { cls: "oa-chat-mcp-call" });
       callEl.toggleClass("oa-chat-mcp-call-success", call.success);
       callEl.toggleClass("oa-chat-mcp-call-error", !call.success);
 
-      const summaryEl = callEl.createDiv({ cls: "oa-chat-mcp-summary" });
+      const summaryEl = callEl.createEl("summary", { cls: "oa-chat-mcp-summary" });
       summaryEl.createSpan({
         cls: "oa-chat-mcp-status",
         text: call.success ? "Success" : "Error",
@@ -832,12 +834,7 @@ export class ChatView extends ItemView {
         text: `${call.durationMs} ms`,
       });
 
-      const detailsEl = callEl.createEl("details", { cls: "oa-chat-mcp-details" });
-      detailsEl.createEl("summary", {
-        cls: "oa-chat-mcp-details-summary",
-        text: "Details",
-      });
-
+      const detailsEl = callEl.createDiv({ cls: "oa-chat-mcp-details" });
       this.createMCPDetailBlock(detailsEl, "Arguments", call.argumentsText);
       if (call.success) {
         this.createMCPDetailBlock(detailsEl, "Result", call.resultText ?? "");
