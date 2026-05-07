@@ -1,73 +1,19 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatRole, type ChatGPTSettings } from "../types.ts";
-import { assertEqual, assertTrue } from "./testUtils.ts";
 
-const codexCliModule = require("../services/CodexCli.ts") as {
-  runCodexExec: (options: {
-    cliPath: string;
-    prompt: string;
-    model?: string;
-    mcpServers?: Record<string, unknown>;
-    signal?: AbortSignal;
-  }) => Promise<string>;
-};
+const { runCodexExecMock } = vi.hoisted(() => ({
+  runCodexExecMock: vi.fn(),
+}));
 
-const { CodexCliStrategy } = require("../strategies/CodexCliStrategy.ts") as {
-  CodexCliStrategy: new (
-    config: ChatGPTSettings,
-    mcpServers?: Record<string, unknown>,
-    internalToolService?: {
-      getCodexPromptInstruction(): string;
-      parseCodexEditResponse(response: string): Promise<{
-        message: string;
-        toolResult: {
-          success: boolean;
-          call?: unknown;
-        };
-      } | null>;
-    },
-  ) => {
-    sendMessage(
-      messages: Array<{ role: ChatRole; content: string }>,
-      onChunk: (chunk: string) => void,
-      onToolEvent?: (call: unknown) => void,
-      signal?: AbortSignal,
-    ): Promise<string>;
+vi.mock("../services/CodexCli.ts", async () => {
+  const actual = await vi.importActual<typeof import("../services/CodexCli.ts")>("../services/CodexCli.ts");
+  return {
+    ...actual,
+    runCodexExec: runCodexExecMock,
   };
-};
+});
 
-type AsyncTestFn = () => Promise<void> | void;
-
-async function runAsyncTests(suiteName: string, tests: AsyncTestFn[]): Promise<void> {
-  console.log(`\n=== ${suiteName} ===\n`);
-
-  let passed = 0;
-  let failed = 0;
-
-  for (const test of tests) {
-    try {
-      await test();
-      passed++;
-    } catch (error) {
-      failed++;
-      console.error(
-        `\u2717 ${test.name} failed:`,
-        error instanceof Error ? error.message : error,
-      );
-    }
-  }
-
-  console.log(`\n=== Test Results ===`);
-  console.log(`Passed: ${passed}/${tests.length}`);
-  console.log(`Failed: ${failed}/${tests.length}`);
-
-  if (failed === 0) {
-    console.log(`\n\u2713 All tests passed!`);
-    return;
-  }
-
-  console.log(`\n\u2717 Some tests failed`);
-  process.exit(1);
-}
+import { CodexCliStrategy } from "../strategies/CodexCliStrategy.ts";
 
 const baseConfig: ChatGPTSettings = {
   cliPath: "codex",
@@ -75,62 +21,62 @@ const baseConfig: ChatGPTSettings = {
   favoriteModels: ["gpt-5"],
 };
 
-async function testStructuredEditResponseEmitsToolEvent(): Promise<void> {
-  const originalRunCodexExec = codexCliModule.runCodexExec;
-  let capturedPrompt = "";
+afterEach(() => {
+  runCodexExecMock.mockReset();
+});
 
-  const toolCall = {
-    source: "internal",
-    serverName: "internal",
-    toolName: "propose_active_note_replacement",
-    qualifiedToolName: "propose_active_note_replacement",
-    argumentsText: "{\"proposedContent\":\"# Updated\"}",
-    durationMs: 12,
-    startedAt: 1000,
-    success: true,
-    resultText: "Prepared a replacement proposal for note.md.",
-    editProposal: {
-      scope: "note",
-      source: "chat",
-      filePath: "note.md",
-      fileName: "note.md",
-      originalContent: "# Old",
-      proposedContent: "# Updated",
-      description: "Updated the note",
-      createdAt: 1234,
-    },
-  };
+describe("Codex CLI strategy", () => {
+  it("emits tool events for structured edit responses", async () => {
+    let capturedPrompt = "";
 
-  codexCliModule.runCodexExec = async ({ prompt }: { prompt: string }) => {
-    capturedPrompt = prompt;
-    return "{\"type\":\"active_note_replacement\",\"message\":\"Updated the note\",\"proposedContent\":\"# Updated\"}";
-  };
-
-  const strategy = new CodexCliStrategy(
-    baseConfig,
-    {},
-    {
-      getCodexPromptInstruction: () => "Use structured edit proposals for explicit note edits.",
-      parseCodexEditResponse: async (response: string) => {
-        assertTrue(
-          response.includes("active_note_replacement"),
-          "Structured response should be passed to the internal tool parser",
-        );
-        return {
-          message: "Updated the note",
-          toolResult: {
-            success: true,
-            call: toolCall,
-          },
-        };
+    const toolCall = {
+      source: "internal",
+      serverName: "internal",
+      toolName: "propose_active_note_replacement",
+      qualifiedToolName: "propose_active_note_replacement",
+      argumentsText: "{\"proposedContent\":\"# Updated\"}",
+      durationMs: 12,
+      startedAt: 1000,
+      success: true,
+      resultText: "Prepared a replacement proposal for note.md.",
+      editProposal: {
+        scope: "note",
+        source: "chat",
+        filePath: "note.md",
+        fileName: "note.md",
+        originalContent: "# Old",
+        proposedContent: "# Updated",
+        description: "Updated the note",
+        createdAt: 1234,
       },
-    },
-  );
+    };
 
-  const chunks: string[] = [];
-  const toolEvents: unknown[] = [];
+    runCodexExecMock.mockImplementation(async ({ prompt }: { prompt: string }) => {
+      capturedPrompt = prompt;
+      return "{\"type\":\"active_note_replacement\",\"message\":\"Updated the note\",\"proposedContent\":\"# Updated\"}";
+    });
 
-  try {
+    const strategy = new CodexCliStrategy(
+      baseConfig,
+      {},
+      {
+        getCodexPromptInstruction: () => "Use structured edit proposals for explicit note edits.",
+        parseCodexEditResponse: async (response: string) => {
+          expect(response).toContain("active_note_replacement");
+          return {
+            message: "Updated the note",
+            toolResult: {
+              success: true,
+              call: toolCall,
+            },
+          };
+        },
+      } as never,
+    );
+
+    const chunks: string[] = [];
+    const toolEvents: unknown[] = [];
+
     const result = await strategy.sendMessage(
       [{ role: ChatRole.User, content: "Rewrite the current note as a checklist." }],
       (chunk) => {
@@ -141,40 +87,28 @@ async function testStructuredEditResponseEmitsToolEvent(): Promise<void> {
       },
     );
 
-    assertEqual(result, "Updated the note", "Structured responses should resolve to the tool summary");
-    assertEqual(chunks, ["Updated the note"], "Structured responses should stream the summary message");
-    assertEqual(toolEvents, [toolCall], "Structured responses should emit the tool event");
-    assertTrue(
-      capturedPrompt.startsWith("SYSTEM:\nUse structured edit proposals for explicit note edits."),
-      "Codex prompt instruction should be prepended to the serialized prompt",
+    expect(result).toBe("Updated the note");
+    expect(chunks).toEqual(["Updated the note"]);
+    expect(toolEvents).toEqual([toolCall]);
+    expect(capturedPrompt.startsWith("SYSTEM:\nUse structured edit proposals for explicit note edits.")).toBe(true);
+    expect(capturedPrompt).toContain("USER:\nRewrite the current note as a checklist.");
+  });
+
+  it("passes through plain responses without tool events", async () => {
+    runCodexExecMock.mockResolvedValue("Normal conversational answer");
+
+    const strategy = new CodexCliStrategy(
+      baseConfig,
+      {},
+      {
+        getCodexPromptInstruction: () => "Be concise.",
+        parseCodexEditResponse: async () => null,
+      } as never,
     );
-    assertTrue(
-      capturedPrompt.includes("USER:\nRewrite the current note as a checklist."),
-      "User message should be serialized into the Codex prompt",
-    );
-  } finally {
-    codexCliModule.runCodexExec = originalRunCodexExec;
-  }
-}
 
-async function testPlainResponseSkipsToolEvent(): Promise<void> {
-  const originalRunCodexExec = codexCliModule.runCodexExec;
+    const chunks: string[] = [];
+    const toolEvents: unknown[] = [];
 
-  codexCliModule.runCodexExec = async () => "Normal conversational answer";
-
-  const strategy = new CodexCliStrategy(
-    baseConfig,
-    {},
-    {
-      getCodexPromptInstruction: () => "Be concise.",
-      parseCodexEditResponse: async () => null,
-    },
-  );
-
-  const chunks: string[] = [];
-  const toolEvents: unknown[] = [];
-
-  try {
     const result = await strategy.sendMessage(
       [{ role: ChatRole.User, content: "Summarize this note." }],
       (chunk) => {
@@ -185,15 +119,8 @@ async function testPlainResponseSkipsToolEvent(): Promise<void> {
       },
     );
 
-    assertEqual(result, "Normal conversational answer", "Plain responses should pass through unchanged");
-    assertEqual(chunks, ["Normal conversational answer"], "Plain responses should stream directly");
-    assertEqual(toolEvents, [], "Plain responses should not emit tool events");
-  } finally {
-    codexCliModule.runCodexExec = originalRunCodexExec;
-  }
-}
-
-void runAsyncTests("Codex CLI strategy", [
-  testStructuredEditResponseEmitsToolEvent,
-  testPlainResponseSkipsToolEvent,
-]);
+    expect(result).toBe("Normal conversational answer");
+    expect(chunks).toEqual(["Normal conversational answer"]);
+    expect(toolEvents).toEqual([]);
+  });
+});

@@ -86,10 +86,18 @@ Only use the plugin with data you are comfortable sending to the configured exte
 
 ```bash
 npm install
+npm test
+npm run check
 npm run build
 ```
 
 The build output is `main.js` in the project root.
+
+For continuous test runs while editing:
+
+```bash
+npm run test:watch
+```
 
 For local development, copy `main.js`, `manifest.json`, and `styles.css` into your vault plugin folder after each build.
 

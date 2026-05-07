@@ -7,7 +7,8 @@
     "build": "node esbuild.config.mjs production",
     "dev": "node esbuild.config.mjs",
     "check": "tsc -p tsconfig.json --noEmit",
-    "test": "npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/DiffService.test.ts && npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/mcp.test.ts && npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/InternalToolProtocol.test.ts && npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/CodexCli.test.ts && npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/CodexCliStrategy.test.ts && npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/CodexModels.test.ts && npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/VaultRAGService.test.ts && npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/VaultEmbeddings.test.ts && npx ts-node -O '{\"module\":\"CommonJS\"}' src/__tests__/ragPreview.test.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "release:prepare": "node scripts/prepare-release.mjs"
   },
   "keywords": [
@@ -21,8 +22,8 @@
     "@types/node": "^25.5.0",
     "esbuild": "^0.27.0",
     "obsidian": "^1.6.0",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "vitest": "^3.2.4"
   },
   "dependencies": {
     "diff": "^8.0.4",

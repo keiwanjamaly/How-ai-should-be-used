@@ -1,106 +1,64 @@
-/**
- * Simple test runner for DiffService
- * Run with: npx ts-node src/__tests__/DiffService.test.ts
- */
-
 import { diffLines } from "diff";
+import { describe, expect, it } from "vitest";
 import { DiffService } from "../services/DiffService.ts";
-import { assertEqual, assertTrue, assertFalse, runTests } from "./testUtils.ts";
 
-function testDiffCalculation(): void {
-  console.log("Test: Diff Calculation");
-
-  const oldContent = "Line 1\nLine 2\nLine 3\n";
-  const newContent = "Line 1\nLine 2 Modified\nLine 3\nLine 4\n";
-
-  const changes = diffLines(oldContent, newContent);
-
-  // Check that we have the expected number of change blocks
-  assertTrue(changes.length >= 2, "Should have at least 2 change blocks");
-
-  // Check for added line
-  const hasAddedLine = changes.some((change) => change.added && change.value.includes("Line 4"));
-  assertTrue(hasAddedLine, "Should detect added line");
-
-  // Check for modified line (technically removed + added)
-  const hasModifiedLine = changes.some(
-    (change) =>
-      (change.added && change.value.includes("Line 2 Modified")) ||
-      (change.removed && change.value.includes("Line 2\n"))
-  );
-  assertTrue(hasModifiedLine, "Should detect modified line");
-
-  console.log("  PASSED");
+function createDiffService(): DiffService {
+  return new DiffService(null as never);
 }
 
-function testEmptyContent(): void {
-  console.log("Test: Empty Content");
+describe("DiffService tests", () => {
+  it("detects added and modified lines with diffLines", () => {
+    const oldContent = "Line 1\nLine 2\nLine 3\n";
+    const newContent = "Line 1\nLine 2 Modified\nLine 3\nLine 4\n";
 
-  const oldContent = "";
-  const newContent = "New line\n";
+    const changes = diffLines(oldContent, newContent);
 
-  const changes = diffLines(oldContent, newContent);
+    expect(changes.length).toBeGreaterThanOrEqual(2);
+    expect(changes.some((change) => change.added && change.value.includes("Line 4"))).toBe(true);
+    expect(changes.some(
+      (change) =>
+        (change.added && change.value.includes("Line 2 Modified")) ||
+        (change.removed && change.value.includes("Line 2\n")),
+    )).toBe(true);
+  });
 
-  assertTrue(changes.length === 1, "Should have one change block");
-  assertTrue(changes[0].added, "Change should be marked as added");
-  assertEqual(changes[0].value, "New line\n", "Added value should match");
+  it("handles empty old content", () => {
+    const changes = diffLines("", "New line\n");
 
-  console.log("  PASSED");
-}
+    expect(changes).toHaveLength(1);
+    expect(changes[0]?.added).toBe(true);
+    expect(changes[0]?.value).toBe("New line\n");
+  });
 
-function testNoChanges(): void {
-  console.log("Test: No Changes");
+  it("reports no-op diffs as unchanged", () => {
+    const changes = diffLines("Line 1\nLine 2\nLine 3\n", "Line 1\nLine 2\nLine 3\n");
 
-  const content = "Line 1\nLine 2\nLine 3\n";
+    expect(changes).toHaveLength(1);
+    expect(changes[0]?.added).toBeFalsy();
+    expect(changes[0]?.removed).toBeFalsy();
+  });
 
-  const changes = diffLines(content, content);
+  it("counts added lines correctly", () => {
+    const changes = diffLines("Line 1\nLine 2\n", "Line 1\nLine 2\nLine 3\nLine 4\n");
+    let addedCount = 0;
 
-  // Should have one unchanged block
-  assertTrue(changes.length === 1, "Should have one change block");
-  assertFalse(changes[0].added, "Should not be marked as added");
-  assertFalse(changes[0].removed, "Should not be marked as removed");
-
-  console.log("  PASSED");
-}
-
-function testLineCounting(): void {
-  console.log("Test: Line Counting");
-
-  const oldContent = "Line 1\nLine 2\n";
-  const newContent = "Line 1\nLine 2\nLine 3\nLine 4\n";
-
-  const changes = diffLines(oldContent, newContent);
-
-  let addedCount = 0;
-  for (const change of changes) {
-    if (change.added) {
-      addedCount += change.value.split("\n").length - 1;
+    for (const change of changes) {
+      if (change.added) {
+        addedCount += change.value.split("\n").length - 1;
+      }
     }
-  }
 
-  assertEqual(addedCount, 2, "Should count 2 added lines");
+    expect(addedCount).toBe(2);
+  });
 
-  console.log("  PASSED");
-}
+  it("detects trailing whitespace changes", () => {
+    const changes = diffLines("Line with trailing   \n", "Line with trailing\n");
 
-function testWhitespaceHandling(): void {
-  console.log("Test: Whitespace Handling");
+    expect(changes.some((change) => change.added || change.removed)).toBe(true);
+  });
 
-  const oldContent = "Line with trailing   \n";
-  const newContent = "Line with trailing\n";
-
-  const changes = diffLines(oldContent, newContent);
-
-  const hasChange = changes.some((change) => change.added || change.removed);
-  assertTrue(hasChange, "Should detect trailing whitespace change");
-
-  console.log("  PASSED");
-}
-
-function testComplexChanges(): void {
-  console.log("Test: Complex Changes");
-
-  const oldContent = `First paragraph
+  it("detects complex multi-block changes", () => {
+    const oldContent = `First paragraph
 Some text here
 Another line
 
@@ -108,7 +66,7 @@ Second paragraph
 More content here
 `;
 
-  const newContent = `First paragraph
+    const newContent = `First paragraph
 Modified text here
 New line inserted
 Another line
@@ -118,212 +76,138 @@ Modified content here
 Final line added
 `;
 
-  const changes = diffLines(oldContent, newContent);
+    const changes = diffLines(oldContent, newContent);
 
-  // Should detect multiple changes
-  const addedChanges = changes.filter((c) => c.added).length;
-  const removedChanges = changes.filter((c) => c.removed).length;
+    expect(changes.filter((change) => change.added).length).toBeGreaterThan(0);
+    expect(changes.filter((change) => change.removed).length).toBeGreaterThan(0);
+  });
 
-  assertTrue(addedChanges > 0, "Should have added changes");
-  assertTrue(removedChanges > 0, "Should have removed changes");
+  it("converts raw diff output to numbered DiffService changes", () => {
+    const svc = createDiffService();
+    const changes = svc.calculateDiff(
+      "Line 1\nLine 2\nLine 3\n",
+      "Line 1\nLine 2 Modified\nLine 3\nLine 4\n",
+    );
 
-  console.log("  PASSED");
-}
+    const unchanged = changes.filter((change) => change.type === "unchanged");
+    const added = changes.filter((change) => change.type === "added");
+    const removed = changes.filter((change) => change.type === "removed");
 
-// --- DiffService instance tests (cherry-pick logic) ---
+    expect(unchanged.length).toBeGreaterThan(0);
+    expect(added.length).toBeGreaterThan(0);
+    expect(removed.length).toBeGreaterThan(0);
 
-function createDiffService(): DiffService {
-  return new DiffService(null as any);
-}
+    for (const change of added) {
+      expect(change.newLineNumber).toBeDefined();
+    }
+    for (const change of removed) {
+      expect(change.oldLineNumber).toBeDefined();
+    }
+    for (const change of unchanged) {
+      expect(change.oldLineNumber).toBeDefined();
+      expect(change.newLineNumber).toBeDefined();
+    }
+  });
 
-// Test: convertToDiffChanges via calculateDiff
-function testConvertToDiffChanges(): void {
-  console.log("Test: convertToDiffChanges via calculateDiff");
+  it("accepts all changes when every added and removed line is selected", () => {
+    const svc = createDiffService();
+    const oldContent = "Line 1\nLine 2\nLine 3";
+    const newContent = "Line 1\nLine 2 Modified\nLine 3\nLine 4";
+    const diff = svc.createFileDiff("test.md", oldContent, newContent);
 
-  const svc = createDiffService();
-  const oldContent = "Line 1\nLine 2\nLine 3\n";
-  const newContent = "Line 1\nLine 2 Modified\nLine 3\nLine 4\n";
+    const acceptedChanges = new Set<number>();
+    for (const change of diff.changes) {
+      if (change.type === "added") {
+        acceptedChanges.add(change.newLineNumber!);
+      } else if (change.type === "removed") {
+        acceptedChanges.add(change.oldLineNumber!);
+      }
+    }
 
-  const changes = svc.calculateDiff(oldContent, newContent);
+    expect(svc.buildContentFromSelections(diff, acceptedChanges, new Set())).toBe(newContent);
+  });
 
-  // Should contain unchanged, removed, added entries with line numbers
-  const unchanged = changes.filter((c) => c.type === "unchanged");
-  const added = changes.filter((c) => c.type === "added");
-  const removed = changes.filter((c) => c.type === "removed");
+  it("rejects all changes when every changed line is rejected", () => {
+    const svc = createDiffService();
+    const oldContent = "Line 1\nLine 2\nLine 3";
+    const newContent = "Line 1\nLine 2 Modified\nLine 3\nLine 4";
+    const diff = svc.createFileDiff("test.md", oldContent, newContent);
 
-  assertTrue(unchanged.length > 0, "Should have unchanged lines");
-  assertTrue(added.length > 0, "Should have added lines");
-  assertTrue(removed.length > 0, "Should have removed lines");
+    const rejectedChanges = new Set<number>();
+    for (const change of diff.changes) {
+      if (change.type === "added") {
+        rejectedChanges.add(change.newLineNumber!);
+      } else if (change.type === "removed") {
+        rejectedChanges.add(change.oldLineNumber!);
+      }
+    }
 
-  // Every added line should have a newLineNumber
-  for (const c of added) {
-    assertTrue(c.newLineNumber !== undefined, "Added line should have newLineNumber");
-  }
-  // Every removed line should have an oldLineNumber
-  for (const c of removed) {
-    assertTrue(c.oldLineNumber !== undefined, "Removed line should have oldLineNumber");
-  }
-  // Every unchanged line should have both
-  for (const c of unchanged) {
-    assertTrue(c.oldLineNumber !== undefined, "Unchanged line should have oldLineNumber");
-    assertTrue(c.newLineNumber !== undefined, "Unchanged line should have newLineNumber");
-  }
+    expect(svc.buildContentFromSelections(diff, new Set(), rejectedChanges)).toBe(oldContent);
+  });
 
-  console.log("  convertToDiffChanges works correctly");
-}
+  it("supports selective cherry-picking", () => {
+    const svc = createDiffService();
+    const oldContent = "Alpha\nBravo\nCharlie";
+    const newContent = "Alpha\nBravo Modified\nCharlie\nDelta";
+    const diff = svc.createFileDiff("test.md", oldContent, newContent);
 
-// Test: Accept all changes -> result equals newContent (minus trailing newline)
-function testBuildContentAcceptAll(): void {
-  console.log("Test: buildContentFromSelections — accept all");
+    const acceptedChanges = new Set<number>();
+    const rejectedChanges = new Set<number>();
+    for (const change of diff.changes) {
+      if (change.type === "added" && change.content === "Delta") {
+        acceptedChanges.add(change.newLineNumber!);
+      } else if (change.type === "added" && change.content === "Bravo Modified") {
+        rejectedChanges.add(change.newLineNumber!);
+      } else if (change.type === "removed" && change.content === "Bravo") {
+        rejectedChanges.add(change.oldLineNumber!);
+      }
+    }
 
-  const svc = createDiffService();
-  const oldContent = "Line 1\nLine 2\nLine 3";
-  const newContent = "Line 1\nLine 2 Modified\nLine 3\nLine 4";
+    expect(svc.buildContentFromSelections(diff, acceptedChanges, rejectedChanges)).toBe(
+      "Alpha\nBravo\nCharlie\nDelta",
+    );
+  });
 
-  const diff = svc.createFileDiff("test.md", oldContent, newContent);
+  it("prefers rejection when a removed line is both accepted and rejected", () => {
+    const svc = createDiffService();
+    const oldContent = "Keep\nRemoveMe";
+    const newContent = "Keep";
+    const diff = svc.createFileDiff("test.md", oldContent, newContent);
+    const removedLine = diff.changes.find((change) => change.type === "removed");
 
-  const acceptedChanges = new Set<number>();
-  const rejectedChanges = new Set<number>();
-  for (const c of diff.changes) {
-    if (c.type === "added") acceptedChanges.add(c.newLineNumber!);
-    else if (c.type === "removed") acceptedChanges.add(c.oldLineNumber!);
-  }
+    expect(removedLine).toBeDefined();
 
-  const result = svc.buildContentFromSelections(diff, acceptedChanges, rejectedChanges);
-  assertEqual(result, newContent, "Accepting all changes should produce newContent");
+    const lineNumber = removedLine!.oldLineNumber!;
+    const acceptedChanges = new Set<number>([lineNumber]);
+    const rejectedChanges = new Set<number>([lineNumber]);
 
-  console.log("  accept all -> newContent");
-}
+    expect(svc.buildContentFromSelections(diff, acceptedChanges, rejectedChanges)).toBe(oldContent);
+  });
 
-// Test: Reject all changes -> result equals oldContent
-function testBuildContentRejectAll(): void {
-  console.log("Test: buildContentFromSelections — reject all");
+  it("defaults unselected changes back to the old content", () => {
+    const svc = createDiffService();
+    const oldContent = "First\nSecond\nThird";
+    const newContent = "First\nThird\nFourth";
+    const diff = svc.createFileDiff("test.md", oldContent, newContent);
 
-  const svc = createDiffService();
-  const oldContent = "Line 1\nLine 2\nLine 3";
-  const newContent = "Line 1\nLine 2 Modified\nLine 3\nLine 4";
+    expect(svc.buildContentFromSelections(diff, new Set(), new Set())).toBe(oldContent);
+  });
 
-  const diff = svc.createFileDiff("test.md", oldContent, newContent);
+  it("returns content and stats for generated cherry-pick results", () => {
+    const svc = createDiffService();
+    const diff = svc.createFileDiff("test.md", "A\nB\n", "A\nB\nC\n");
+    const addedLine = diff.changes.find((change) => change.type === "added");
 
-  const acceptedChanges = new Set<number>();
-  const rejectedChanges = new Set<number>();
-  for (const c of diff.changes) {
-    if (c.type === "added") rejectedChanges.add(c.newLineNumber!);
-    else if (c.type === "removed") rejectedChanges.add(c.oldLineNumber!);
-  }
+    expect(addedLine).toBeDefined();
 
-  const result = svc.buildContentFromSelections(diff, acceptedChanges, rejectedChanges);
-  assertEqual(result, oldContent, "Rejecting all changes should produce oldContent");
+    const result = svc.generateCherryPickResult(
+      diff,
+      new Set<number>([addedLine!.newLineNumber!]),
+      new Set(),
+    );
 
-  console.log("  reject all -> oldContent");
-}
-
-// Test: Selective cherry-pick — accept some added lines, reject some removed lines
-function testBuildContentSelectiveCherryPick(): void {
-  console.log("Test: buildContentFromSelections — selective cherry-pick");
-
-  const svc = createDiffService();
-  const oldContent = "Alpha\nBravo\nCharlie";
-  const newContent = "Alpha\nBravo Modified\nCharlie\nDelta";
-
-  const diff = svc.createFileDiff("test.md", oldContent, newContent);
-
-  // Accept addition of "Delta", reject the "Bravo"->"Bravo Modified" change
-  const acceptedChanges = new Set<number>();
-  const rejectedChanges = new Set<number>();
-  for (const c of diff.changes) {
-    if (c.type === "added" && c.content === "Delta") acceptedChanges.add(c.newLineNumber!);
-    else if (c.type === "added" && c.content === "Bravo Modified") rejectedChanges.add(c.newLineNumber!);
-    else if (c.type === "removed" && c.content === "Bravo") rejectedChanges.add(c.oldLineNumber!);
-  }
-
-  const result = svc.buildContentFromSelections(diff, acceptedChanges, rejectedChanges);
-  // "Bravo" kept (rejected removal), "Bravo Modified" excluded (rejected addition), "Delta" added
-  assertEqual(result, "Alpha\nBravo\nCharlie\nDelta", "Selective cherry-pick should merge correctly");
-
-  console.log("  selective cherry-pick works");
-}
-
-// Test: Edge case — line number in both acceptedChanges and rejectedChanges
-// For removed lines: condition is `rejectedChanges.has(n) || !acceptedChanges.has(n)`
-// so if in BOTH sets, rejectedChanges wins — the line is KEPT (removal not applied).
-function testBuildContentLineInBothSets(): void {
-  console.log("Test: buildContentFromSelections — line in both accepted and rejected");
-
-  const svc = createDiffService();
-  const oldContent = "Keep\nRemoveMe";
-  const newContent = "Keep";
-
-  const diff = svc.createFileDiff("test.md", oldContent, newContent);
-  const removedLine = diff.changes.find((c) => c.type === "removed")!;
-  const lineNum = removedLine.oldLineNumber!;
-
-  // Both sets contain the line — for removed lines, rejected wins, so the line is KEPT
-  const acceptedChanges = new Set<number>([lineNum]);
-  const rejectedChanges = new Set<number>([lineNum]);
-
-  const result = svc.buildContentFromSelections(diff, acceptedChanges, rejectedChanges);
-  assertEqual(result, oldContent, "When removed line is in both sets, rejected wins — line is kept");
-
-  console.log("  line in both sets -> rejected wins for removed lines");
-}
-
-// Test: Edge case — changed lines not in either set (unselected)
-// Unselected removed lines: KEPT (removal not applied — user must explicitly accept)
-// Unselected added lines: EXCLUDED (not applied)
-function testBuildContentUnselectedChanges(): void {
-  console.log("Test: buildContentFromSelections — unselected changes (not in either set)");
-
-  const svc = createDiffService();
-  const oldContent = "First\nSecond\nThird";
-  const newContent = "First\nThird\nFourth";
-
-  const diff = svc.createFileDiff("test.md", oldContent, newContent);
-
-  const result = svc.buildContentFromSelections(diff, new Set(), new Set());
-
-  // Unselected removals kept, unselected additions excluded -> equals oldContent
-  assertEqual(result, oldContent,
-    "Unselected changes: removed lines kept, added lines excluded");
-
-  console.log("  unselected changes default correctly");
-}
-
-// Test: generateCherryPickResult returns content and stats
-function testGenerateCherryPickResult(): void {
-  console.log("Test: generateCherryPickResult");
-
-  const svc = createDiffService();
-  const oldContent = "A\nB\n";
-  const newContent = "A\nB\nC\n";
-
-  const diff = svc.createFileDiff("test.md", oldContent, newContent);
-  // With trailing newlines, diffLines produces a clean "added C" at the end
-  const addedLine = diff.changes.find((c) => c.type === "added")!;
-  const accepted = new Set<number>([addedLine.newLineNumber!]);
-
-  const result = svc.generateCherryPickResult(diff, accepted, new Set());
-
-  // buildContentFromSelections joins with "\n", so result.content === "A\nB\nC" (no trailing \n)
-  assertTrue(result.content.includes("C"), "Accepted addition should appear in result");
-  assertTrue(typeof result.stats === "object", "Result should include stats object");
-  assertTrue(result.stats.modified >= 0, "stats.modified should be a non-negative number");
-
-  console.log("  generateCherryPickResult structure is correct");
-}
-
-runTests("DiffService Tests", [
-  testDiffCalculation,
-  testEmptyContent,
-  testNoChanges,
-  testLineCounting,
-  testWhitespaceHandling,
-  testComplexChanges,
-  testConvertToDiffChanges,
-  testBuildContentAcceptAll,
-  testBuildContentRejectAll,
-  testBuildContentSelectiveCherryPick,
-  testBuildContentLineInBothSets,
-  testBuildContentUnselectedChanges,
-  testGenerateCherryPickResult,
-]);
+    expect(result.content).toContain("C");
+    expect(typeof result.stats).toBe("object");
+    expect(result.stats.modified).toBeGreaterThanOrEqual(0);
+  });
+});

@@ -1,318 +1,211 @@
-/**
- * Simple test runner for MCP types
- * Run with: npx ts-node src/__tests__/mcp.test.ts
- */
-
+import { describe, expect, it } from "vitest";
 import {
-	isValidMCPServerConfig,
-	parseMCPServers,
-	normalizeMCPServers,
-	normalizeServerConfig,
-	formatMCPServers,
-	mergeMCPServers,
-	getQualifiedToolName,
-	parseQualifiedToolName,
-	DEFAULT_MCP_SETTINGS,
-	type MCPServers,
+  DEFAULT_MCP_SETTINGS,
+  formatMCPServers,
+  getQualifiedToolName,
+  isValidMCPServerConfig,
+  mergeMCPServers,
+  normalizeMCPServers,
+  normalizeServerConfig,
+  parseMCPServers,
+  parseQualifiedToolName,
+  type MCPServers,
 } from "../types/mcp.ts";
-import { assertEqual, assertTrue, assertFalse, runTests } from "./testUtils.ts";
 
-function testIsValidMCPServerConfig(): void {
-	console.log("Test: isValidMCPServerConfig");
+describe("MCP types", () => {
+  it("validates local MCP server configs", () => {
+    expect(isValidMCPServerConfig({
+      type: "local",
+      command: ["npx", "-y", "@modelcontextprotocol/server-everything"],
+      enabled: true,
+    })).toBe(true);
 
-	// Valid local config
-	assertTrue(
-		isValidMCPServerConfig({
-			type: "local",
-			command: ["npx", "-y", "@modelcontextprotocol/server-everything"],
-			enabled: true,
-		}),
-		"Should validate valid local config",
-	);
+    expect(isValidMCPServerConfig({
+      type: "remote",
+      command: ["npx"],
+      enabled: true,
+    })).toBe(false);
 
-	// Invalid - remote type
-	assertFalse(
-		isValidMCPServerConfig({
-			type: "remote",
-			command: ["npx"],
-			enabled: true,
-		}),
-		"Should reject remote type",
-	);
+    expect(isValidMCPServerConfig({
+      type: "local",
+      enabled: true,
+    })).toBe(false);
 
-	// Invalid - missing command
-	assertFalse(
-		isValidMCPServerConfig({
-			type: "local",
-			enabled: true,
-		}),
-		"Should reject missing command",
-	);
+    expect(isValidMCPServerConfig({
+      type: "local",
+      command: [],
+      enabled: true,
+    })).toBe(false);
 
-	// Invalid - empty command array
-	assertFalse(
-		isValidMCPServerConfig({
-			type: "local",
-			command: [],
-			enabled: true,
-		}),
-		"Should reject empty command array",
-	);
+    expect(isValidMCPServerConfig({
+      type: "local",
+      command: ["npx"],
+      enabled: true,
+      environment: { API_KEY: "test" },
+    })).toBe(true);
+  });
 
-	// Valid with environment
-	assertTrue(
-		isValidMCPServerConfig({
-			type: "local",
-			command: ["npx"],
-			enabled: true,
-			environment: { API_KEY: "test" },
-		}),
-		"Should accept config with environment",
-	);
+  it("normalizes the alternate command/args/env format", () => {
+    const altFormat = {
+      command: "uvx",
+      args: ["duckduckgo-mcp-server"],
+      env: {
+        DDG_SAFE_SEARCH: "MODERATE",
+        DDG_REGION: "de-de",
+      },
+    };
 
-	console.log("  PASSED");
-}
+    const result = normalizeServerConfig(altFormat);
+    expect(result).not.toBeNull();
+    expect(result?.type).toBe("local");
+    expect(result?.command).toEqual(["uvx", "duckduckgo-mcp-server"]);
+    expect(result?.enabled).toBe(true);
+    expect(result?.environment).toEqual({
+      DDG_SAFE_SEARCH: "MODERATE",
+      DDG_REGION: "de-de",
+    });
 
-function testParseMCPServers(): void {
-	console.log("Test: parseMCPServers");
+    const parsed = parseMCPServers(JSON.stringify({ duckduckgo: altFormat }));
+    expect(parsed).not.toBeNull();
+    expect(Object.keys(parsed ?? {})).toHaveLength(1);
+    expect(parsed?.duckduckgo.command).toEqual(["uvx", "duckduckgo-mcp-server"]);
 
-	// Valid JSON with multiple servers
-	const validJson = JSON.stringify({
-		server1: {
-			type: "local",
-			command: ["cmd1"],
-			enabled: true,
-		},
-		server2: {
-			type: "local",
-			command: ["cmd2"],
-			enabled: false,
-		},
-	});
+    const noArgs = normalizeServerConfig({ command: "uvx" });
+    expect(noArgs).not.toBeNull();
+    expect(noArgs?.command).toEqual(["uvx"]);
 
-	const result = parseMCPServers(validJson);
-	assertTrue(result !== null, "Should parse valid JSON");
-	assertEqual(Object.keys(result!).length, 2, "Should have 2 servers");
-	assertEqual(result!.server1.enabled, true, "server1 should be enabled");
-	assertEqual(result!.server2.enabled, false, "server2 should be disabled");
+    expect(normalizeServerConfig({ foo: "bar" })).toBeNull();
+    expect(normalizeServerConfig({ command: 123 })).toBeNull();
+  });
 
-	// Filter out invalid
-	const mixedJson = JSON.stringify({
-		valid: {
-			type: "local",
-			command: ["cmd1"],
-			enabled: true,
-		},
-		invalid: {
-			type: "remote",
-			command: ["cmd2"],
-			enabled: true,
-		},
-	});
+  it("normalizes MCP server maps and skips invalid entries", () => {
+    const result = normalizeMCPServers({
+      duckduckgo: {
+        command: "uvx",
+        args: ["duckduckgo-mcp-server"],
+        env: {
+          DDG_REGION: "de-de",
+        },
+      },
+      invalid: {
+        foo: "bar",
+      },
+    });
 
-	const mixedResult = parseMCPServers(mixedJson);
-	assertTrue(mixedResult !== null, "Should parse mixed JSON");
-	assertEqual(Object.keys(mixedResult!).length, 1, "Should filter invalid configs");
-	assertTrue(mixedResult!.valid !== undefined, "Should keep valid config");
+    expect(result).not.toBeNull();
+    expect(Object.keys(result ?? {})).toHaveLength(1);
+    expect(result?.duckduckgo.command).toEqual(["uvx", "duckduckgo-mcp-server"]);
+    expect(normalizeMCPServers([])).toBeNull();
+  });
 
-	// Invalid JSON
-	assertEqual(parseMCPServers("not valid json"), null, "Should return null for invalid JSON");
+  it("parses MCP server JSON", () => {
+    const validJson = JSON.stringify({
+      server1: {
+        type: "local",
+        command: ["cmd1"],
+        enabled: true,
+      },
+      server2: {
+        type: "local",
+        command: ["cmd2"],
+        enabled: false,
+      },
+    });
 
-	// Empty JSON
-	assertEqual(parseMCPServers("{}"), {}, "Should return empty object for empty JSON");
+    const result = parseMCPServers(validJson);
+    expect(result).not.toBeNull();
+    expect(Object.keys(result ?? {})).toHaveLength(2);
+    expect(result?.server1.enabled).toBe(true);
+    expect(result?.server2.enabled).toBe(false);
 
-	console.log("  PASSED");
-}
+    const mixedResult = parseMCPServers(JSON.stringify({
+      valid: {
+        type: "local",
+        command: ["cmd1"],
+        enabled: true,
+      },
+      invalid: {
+        type: "remote",
+        command: ["cmd2"],
+        enabled: true,
+      },
+    }));
+    expect(mixedResult).not.toBeNull();
+    expect(Object.keys(mixedResult ?? {})).toHaveLength(1);
+    expect(mixedResult?.valid).toBeDefined();
 
-function testFormatMCPServers(): void {
-	console.log("Test: formatMCPServers");
+    expect(parseMCPServers("not valid json")).toBeNull();
+    expect(parseMCPServers("{}")).toEqual({});
+  });
 
-	const servers: MCPServers = {
-		test: {
-			type: "local",
-			command: ["npx"],
-			enabled: true,
-		},
-	};
+  it("formats MCP servers for display", () => {
+    const servers: MCPServers = {
+      test: {
+        type: "local",
+        command: ["npx"],
+        enabled: true,
+      },
+    };
 
-	const formatted = formatMCPServers(servers);
-	assertTrue(formatted.includes('"type": "local"'), "Should include type field");
-	assertTrue(formatted.includes('"command":'), "Should include command field");
-	assertTrue(formatted.includes('"enabled": true'), "Should include enabled field");
-	assertTrue(formatted.startsWith("{"), "Should start with brace");
+    const formatted = formatMCPServers(servers);
+    expect(formatted).toContain('"type": "local"');
+    expect(formatted).toContain('"command":');
+    expect(formatted).toContain('"enabled": true');
+    expect(formatted.startsWith("{")).toBe(true);
+  });
 
-	console.log("  PASSED");
-}
+  it("merges server collections with later overrides", () => {
+    const servers1: MCPServers = {
+      server1: {
+        type: "local",
+        command: ["cmd1"],
+        enabled: true,
+      },
+    };
+    const servers2: MCPServers = {
+      server2: {
+        type: "local",
+        command: ["cmd2"],
+        enabled: true,
+      },
+    };
 
-function testMergeMCPServers(): void {
-	console.log("Test: mergeMCPServers");
+    const merged = mergeMCPServers(servers1, servers2);
+    expect(Object.keys(merged)).toHaveLength(2);
+    expect(merged.server1).toBeDefined();
+    expect(merged.server2).toBeDefined();
 
-	const servers1: MCPServers = {
-		server1: {
-			type: "local",
-			command: ["cmd1"],
-			enabled: true,
-		},
-	};
+    const overridden = mergeMCPServers(servers1, {
+      server1: {
+        type: "local",
+        command: ["cmd2"],
+        enabled: false,
+      },
+    });
 
-	const servers2: MCPServers = {
-		server2: {
-			type: "local",
-			command: ["cmd2"],
-			enabled: true,
-		},
-	};
+    expect(overridden.server1.command).toEqual(["cmd2"]);
+    expect(overridden.server1.enabled).toBe(false);
+  });
 
-	const merged = mergeMCPServers(servers1, servers2);
-	assertEqual(Object.keys(merged).length, 2, "Should merge both server collections");
-	assertTrue(merged.server1 !== undefined, "Should have server1");
-	assertTrue(merged.server2 !== undefined, "Should have server2");
+  it("builds and parses qualified tool names", () => {
+    expect(getQualifiedToolName("my-server", "my-tool")).toBe("my-server_my-tool");
+    expect(getQualifiedToolName("server_test", "tool_test")).toBe("server_test_tool_test");
+    expect(parseQualifiedToolName("my-server_my-tool")).toEqual({
+      serverName: "my-server",
+      toolName: "my-tool",
+    });
+    expect(parseQualifiedToolName("server_tool_a_b_c")).toEqual({
+      serverName: "server",
+      toolName: "tool_a_b_c",
+    });
+    expect(parseQualifiedToolName("invalid")).toBeNull();
+    expect(parseQualifiedToolName("")).toBeNull();
+  });
 
-	// Test override
-	const overrideServers: MCPServers = {
-		server1: {
-			type: "local",
-			command: ["cmd2"],
-			enabled: false,
-		},
-	};
-
-	const overridden = mergeMCPServers(servers1, overrideServers);
-	assertEqual(overridden.server1.command, ["cmd2"], "Later source should override");
-	assertEqual(overridden.server1.enabled, false, "Later source should override enabled");
-
-	console.log("  PASSED");
-}
-
-function testGetQualifiedToolName(): void {
-	console.log("Test: getQualifiedToolName");
-
-	assertEqual(
-		getQualifiedToolName("my-server", "my-tool"),
-		"my-server_my-tool",
-		"Should combine with underscore",
-	);
-
-	assertEqual(
-		getQualifiedToolName("server_test", "tool_test"),
-		"server_test_tool_test",
-		"Should handle names with underscores",
-	);
-
-	console.log("  PASSED");
-}
-
-function testParseQualifiedToolName(): void {
-	console.log("Test: parseQualifiedToolName");
-
-	const result1 = parseQualifiedToolName("my-server_my-tool");
-	assertEqual(result1, { serverName: "my-server", toolName: "my-tool" }, "Should parse correctly");
-
-	const result2 = parseQualifiedToolName("server_tool_a_b_c");
-	assertEqual(
-		result2,
-		{ serverName: "server", toolName: "tool_a_b_c" },
-		"Should handle tool names with underscores",
-	);
-
-	assertEqual(parseQualifiedToolName("invalid"), null, "Should return null for invalid name");
-	assertEqual(parseQualifiedToolName(""), null, "Should return null for empty string");
-
-	console.log("  PASSED");
-}
-
-function testDefaultMCPSettings(): void {
-	console.log("Test: DEFAULT_MCP_SETTINGS");
-
-	assertEqual(DEFAULT_MCP_SETTINGS.enabled, false, "Should be disabled by default");
-	assertEqual(DEFAULT_MCP_SETTINGS.configFilePath, "", "Should have empty path by default");
-	assertEqual(DEFAULT_MCP_SETTINGS.customMCPs, {}, "Should have empty customMCPs");
-	assertEqual(DEFAULT_MCP_SETTINGS.enabledTools, {}, "Should have empty enabledTools");
-
-	console.log("  PASSED");
-}
-
-function testNormalizeAltFormat(): void {
-	console.log("Test: normalizeServerConfig - alt format");
-
-	// Exact format the user pasted
-	const altFormat = {
-		command: "uvx",
-		args: ["duckduckgo-mcp-server"],
-		env: {
-			DDG_SAFE_SEARCH: "MODERATE",
-			DDG_REGION: "de-de",
-		},
-	};
-
-	const result = normalizeServerConfig(altFormat);
-	assertTrue(result !== null, "Should accept alt format");
-	assertEqual(result!.type, "local", "Should set type to local");
-	assertEqual(result!.command, ["uvx", "duckduckgo-mcp-server"], "Should merge command + args");
-	assertEqual(result!.enabled, true, "Should default enabled to true");
-	assertEqual(
-		result!.environment,
-		{ DDG_SAFE_SEARCH: "MODERATE", DDG_REGION: "de-de" },
-		"Should map env to environment",
-	);
-
-	// Alt format wrapped in a named key (as it would appear in the textarea)
-	const wrapped = JSON.stringify({ "duckduckgo": altFormat });
-	const parsed = parseMCPServers(wrapped);
-	assertTrue(parsed !== null, "Should parse wrapped alt format");
-	assertEqual(Object.keys(parsed!).length, 1, "Should have 1 server");
-	assertEqual(parsed!.duckduckgo.command, ["uvx", "duckduckgo-mcp-server"],
-		"Should normalize command in parsed result");
-
-	// Without args
-	const noArgs = normalizeServerConfig({ command: "uvx" });
-	assertTrue(noArgs !== null, "Should accept command with no args");
-	assertEqual(noArgs!.command, ["uvx"], "Should produce single-element command");
-
-	// Invalid - completely unrecognised shape
-	assertEqual(normalizeServerConfig({ foo: "bar" }), null, "Should reject unrecognised shape");
-	assertEqual(normalizeServerConfig({ command: 123 }), null, "Should reject numeric command");
-
-	console.log("  PASSED");
-}
-
-function testNormalizeMCPServers(): void {
-	console.log("Test: normalizeMCPServers");
-
-	const result = normalizeMCPServers({
-		duckduckgo: {
-			command: "uvx",
-			args: ["duckduckgo-mcp-server"],
-			env: {
-				DDG_REGION: "de-de",
-			},
-		},
-		invalid: {
-			foo: "bar",
-		},
-	});
-
-	assertTrue(result !== null, "Should accept object input");
-	assertEqual(Object.keys(result!).length, 1, "Should normalize valid entries and skip invalid ones");
-	assertEqual(
-		result!.duckduckgo.command,
-		["uvx", "duckduckgo-mcp-server"],
-		"Should normalize alt-format server maps from config files",
-	);
-
-	assertEqual(normalizeMCPServers([]), null, "Should reject array input");
-
-	console.log("  PASSED");
-}
-
-runTests("MCP Types Tests", [
-	testIsValidMCPServerConfig,
-	testNormalizeAltFormat,
-	testNormalizeMCPServers,
-	testParseMCPServers,
-	testFormatMCPServers,
-	testMergeMCPServers,
-	testGetQualifiedToolName,
-	testParseQualifiedToolName,
-	testDefaultMCPSettings,
-]);
+  it("exposes the default MCP settings", () => {
+    expect(DEFAULT_MCP_SETTINGS.enabled).toBe(false);
+    expect(DEFAULT_MCP_SETTINGS.configFilePath).toBe("");
+    expect(DEFAULT_MCP_SETTINGS.customMCPs).toEqual({});
+    expect(DEFAULT_MCP_SETTINGS.enabledTools).toEqual({});
+  });
+});
