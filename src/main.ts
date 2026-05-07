@@ -12,12 +12,11 @@ import {
   type ObsidianAIChatSettings,
   type OpenRouterSettings,
 } from "./types";
-import { FileChangeDetector } from "./services/FileChangeDetector";
 import { DiffService } from "./services/DiffService";
 import { MCPService } from "./services/MCPService";
 import { InternalToolService } from "./services/InternalToolService";
 import { VaultRAGService } from "./services/VaultRAGService";
-import { DiffModal, ChangeNotificationModal } from "./components/DiffModal";
+import { DiffModal } from "./components/DiffModal";
 import { handleDiffResult } from "./utils/diffResultHandler";
 import { formatErrorMessage } from "./utils/errorUtils";
 import { mergeMCPServers } from "./types/mcp";
@@ -35,7 +34,6 @@ import { cachedSelectionHighlightExtension } from "./editor/CachedSelectionHighl
 
 export default class ObsidianAIChatPlugin extends Plugin {
   settings!: ObsidianAIChatSettings;
-  fileChangeDetector!: FileChangeDetector;
   diffService!: DiffService;
   mcpService!: MCPService;
   internalToolService!: InternalToolService;
@@ -49,7 +47,6 @@ export default class ObsidianAIChatPlugin extends Plugin {
 
     // Initialize services
     this.diffService = new DiffService(this.app);
-    this.fileChangeDetector = new FileChangeDetector(this.app, this.diffService);
     this.mcpService = new MCPService();
     this.internalToolService = new InternalToolService(this.app);
     this.vaultRAGService = new VaultRAGService(this.app, this.manifest.id, () => this.settings);
@@ -70,11 +67,6 @@ export default class ObsidianAIChatPlugin extends Plugin {
         error instanceof Error ? error.message : String(error),
       );
     }
-    
-    // Set up change detection
-    this.fileChangeDetector.onChange((pendingDiff) => {
-      this.handleExternalChange(pendingDiff);
-    });
 
     this.registerEvent(this.app.vault.on("create", (file) => {
       if (!(file instanceof TFile)) {
@@ -110,10 +102,7 @@ export default class ObsidianAIChatPlugin extends Plugin {
         void this.vaultRAGService.refreshStatus();
       }
     }));
-    
-    // Register the file change detector as a component
-    this.addChild(this.fileChangeDetector);
-    this.fileChangeDetector.initialize();
+
     this.registerEditorExtension(cachedSelectionHighlightExtension);
 
     // Initialize MCP servers if enabled
@@ -129,24 +118,6 @@ export default class ObsidianAIChatPlugin extends Plugin {
       name: "Open AI Chat",
       callback: () => {
         void this.activateView();
-      },
-    });
-
-    this.addCommand({
-      id: "review-pending-changes",
-      name: "Review Pending Changes",
-      callback: () => {
-        void this.reviewPendingChanges();
-      },
-    });
-
-    this.addCommand({
-      id: "toggle-change-detection",
-      name: "Toggle External Change Detection",
-      callback: () => {
-        const currentState = this.fileChangeDetector.getEnabled();
-        this.fileChangeDetector.setEnabled(!currentState);
-        new Notice(`Change detection ${!currentState ? "enabled" : "disabled"}`);
       },
     });
 
@@ -169,11 +140,6 @@ export default class ObsidianAIChatPlugin extends Plugin {
     this.addRibbonIcon("bot", "Open AI Chat", () => {
       void this.activateView();
     });
-
-    // Show pending changes indicator in ribbon
-    this.addRibbonIcon("git-compare", "Review pending changes", () => {
-      void this.reviewPendingChanges();
-    }).toggleClass("oa-hidden", true); // Initially hidden
 
     this.app.workspace.onLayoutReady(() => {
       void this.refreshVaultRAGIndex();
@@ -438,56 +404,6 @@ export default class ObsidianAIChatPlugin extends Plugin {
     this.app.workspace.revealLeaf(rightLeaf);
   }
 
-  /**
-   * Handle external file changes detected by FileChangeDetector
-   */
-  private handleExternalChange(pendingDiff: { file: TFile; diff: { path: string; oldContent: string; newContent: string; changes: unknown[] }; timestamp: number }): void {
-    // Show notification with option to review
-    new ChangeNotificationModal(
-      this.app,
-      pendingDiff.file.name,
-      () => this.showDiffModal(pendingDiff.file),
-      () => {
-        // Dismiss - remove from pending
-        this.fileChangeDetector.removePendingDiff(pendingDiff.file.path);
-      }
-    ).open();
-  }
-
-  /**
-   * Show the diff modal for a specific file
-   */
-  private async showDiffModal(file: TFile): Promise<void> {
-    const pendingDiff = this.fileChangeDetector.getPendingDiff(file);
-    if (!pendingDiff) {
-      new Notice("No pending changes for this file");
-      return;
-    }
-
-    new DiffModal(this.app, pendingDiff, async (result) => {
-      await handleDiffResult(
-        result,
-        file,
-        this.diffService,
-        (path) => this.markAsSelfModified(path),
-        {
-          onApplied: () => {
-            this.fileChangeDetector.removePendingDiff(file.path);
-          },
-          onRejected: async () => {
-            try {
-              await this.diffService.rejectChanges(file, pendingDiff.diff.oldContent);
-              this.fileChangeDetector.removePendingDiff(file.path);
-              new Notice("Changes rejected - file restored to original");
-            } catch (error) {
-              new Notice(`Failed to reject changes: ${formatErrorMessage(error)}`);
-            }
-          },
-        },
-      );
-    }).open();
-  }
-
   async openEditReview(
     proposal: ActiveNoteEditProposal,
     options: { source?: ActiveNoteEditProposal["source"] } = {},
@@ -525,35 +441,10 @@ export default class ObsidianAIChatPlugin extends Plugin {
         result,
         abstractFile,
         this.diffService,
-        (path) => this.markAsSelfModified(path),
         {},
       );
     }, {
       proposal: normalizedProposal,
-      conflictMode: "block",
     }).open();
-  }
-
-  /**
-   * Review all pending changes
-   */
-  private async reviewPendingChanges(): Promise<void> {
-    const pendingDiffs = this.fileChangeDetector.getPendingDiffs();
-    
-    if (pendingDiffs.length === 0) {
-      new Notice("No pending changes to review");
-      return;
-    }
-
-    // For now, show the first pending diff
-    // Could be extended to show a list of all pending files
-    await this.showDiffModal(pendingDiffs[0].file);
-  }
-
-  /**
-   * Mark a file as being modified by the AI (prevents diff detection)
-   */
-  markAsSelfModified(path: string): void {
-    this.fileChangeDetector.markAsSelfModified(path);
   }
 }

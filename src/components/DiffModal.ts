@@ -1,6 +1,5 @@
-import { Modal, App, Setting, Notice, TFile, ButtonComponent, setIcon } from "obsidian";
+import { App, Modal, Notice, TFile, ButtonComponent, Setting, setIcon } from "obsidian";
 import { DiffView } from "./DiffView";
-import { PendingDiff } from "../services/FileChangeDetector";
 import { DiffService, type FileDiff } from "../services/DiffService";
 import type { ActiveNoteEditProposal } from "../types/tools";
 import { formatErrorMessage } from "../utils/errorUtils";
@@ -16,7 +15,12 @@ export type DiffModalCallback = (result: DiffModalResult) => void;
 
 export interface DiffModalOptions {
   proposal?: ActiveNoteEditProposal;
-  conflictMode?: "warn" | "block";
+}
+
+export interface DiffModalFileTarget {
+  file: TFile;
+  diff: FileDiff;
+  timestamp: number;
 }
 
 export class DiffModal extends Modal {
@@ -33,40 +37,33 @@ export class DiffModal extends Modal {
   private currentDiff: FileDiff;
   private editRefreshTimer: number | null = null;
   private readonly proposal?: ActiveNoteEditProposal;
-  private readonly conflictMode: "warn" | "block";
 
   constructor(
     app: App,
-    private readonly pendingDiff: PendingDiff,
+    private readonly reviewTarget: DiffModalFileTarget,
     callbacks: DiffModalCallback,
     options: DiffModalOptions = {},
   ) {
     super(app);
     this.callbacks = callbacks;
     this.diffService = new DiffService(app);
-    this.currentDiff = pendingDiff.diff;
+    this.currentDiff = reviewTarget.diff;
     this.proposal = options.proposal;
-    this.conflictMode = options.conflictMode ?? "warn";
   }
 
   onOpen(): void {
     const { contentEl } = this;
 
     contentEl.addClass("oa-diff-modal");
-    this.titleEl.setText(`Review Changes: ${this.pendingDiff.file.name}`);
-
-    if (this.proposal) {
-      this.renderProposalSummary(contentEl);
-      this.renderProposalEditor(contentEl);
-    }
+    this.titleEl.setText(`Review Changes: ${this.reviewTarget.file.name}`);
+    this.renderProposalSummary(contentEl);
+    this.renderProposalEditor(contentEl);
 
     const infoEl = contentEl.createDiv({ cls: "oa-diff-info" });
     const infoIcon = infoEl.createSpan({ cls: "oa-diff-info-icon" });
     setIcon(infoIcon, "info");
     infoEl.createSpan({
-      text: this.proposal
-        ? "Review the proposed edits below. You can refine the modified content, cherry-pick line changes, or apply the current proposal."
-        : "Review the changes below. Toggle selection mode to cherry-pick individual changes, or use Accept All/Reject All buttons.",
+      text: "Review the proposed edits below. You can refine the modified content, cherry-pick line changes, or apply the current proposal.",
     });
 
     const diffContainer = contentEl.createDiv({ cls: "oa-diff-modal-content" });
@@ -100,7 +97,7 @@ export class DiffModal extends Modal {
     new Setting(footer)
       .addButton((btn) => {
         btn
-          .setButtonText(this.proposal ? "Apply Current Changes" : "Accept All Changes")
+          .setButtonText("Apply Current Changes")
           .setCta()
           .onClick(() => {
             this.handleAccept(this.getCurrentProposedContent());
@@ -120,7 +117,6 @@ export class DiffModal extends Modal {
       .addButton((btn) => {
         btn
           .setButtonText("Reset Proposal")
-          .setDisabled(!this.proposal)
           .onClick(() => {
             this.resetProposal();
           });
@@ -155,25 +151,17 @@ export class DiffModal extends Modal {
   }
 
   private renderProposalSummary(contentEl: HTMLElement): void {
-    if (!this.proposal) {
-      return;
-    }
-
     const summaryEl = contentEl.createDiv({ cls: "oa-diff-proposal-summary" });
     const badgeEl = summaryEl.createSpan({ cls: "oa-diff-proposal-badge" });
-    badgeEl.setText(this.proposal.scope === "selection" ? "Selection edit" : "Note edit");
+    badgeEl.setText(this.proposal?.scope === "selection" ? "Selection edit" : "Note edit");
 
     summaryEl.createSpan({
       cls: "oa-diff-proposal-description",
-      text: this.proposal.description,
+      text: this.proposal?.description ?? "AI proposed changes",
     });
   }
 
   private renderProposalEditor(contentEl: HTMLElement): void {
-    if (!this.proposal) {
-      return;
-    }
-
     const editorSection = contentEl.createDiv({ cls: "oa-diff-proposal-editor" });
     const headerEl = editorSection.createDiv({ cls: "oa-diff-proposal-editor-header" });
     headerEl.createDiv({ cls: "oa-diff-proposal-editor-title", text: "Modified content" });
@@ -185,7 +173,7 @@ export class DiffModal extends Modal {
     this.editableContentEl = editorSection.createEl("textarea", {
       cls: "oa-diff-proposal-textarea",
     });
-    this.editableContentEl.value = this.proposal.proposedContent;
+    this.editableContentEl.value = this.proposal?.proposedContent ?? this.currentDiff.newContent;
     this.editableContentEl.addEventListener("input", () => {
       this.scheduleDiffRefresh();
     });
@@ -214,9 +202,7 @@ export class DiffModal extends Modal {
     }
 
     this.statsEl.createEl("span", {
-      text: this.proposal
-        ? "No cherry-pick selections yet. You can also edit the proposed content directly above."
-        : "No cherry-pick selections yet.",
+      text: "No cherry-pick selections yet. You can also edit the proposed content directly above.",
       cls: "oa-diff-stats-text",
     });
   }
@@ -278,7 +264,7 @@ export class DiffModal extends Modal {
   private refreshDiffFromEditedContent(): void {
     const nextDiff = this.diffService.createFileDiff(
       this.currentDiff.path,
-      this.pendingDiff.diff.oldContent,
+      this.reviewTarget.diff.oldContent,
       this.getCurrentProposedContent(),
     );
 
@@ -296,11 +282,11 @@ export class DiffModal extends Modal {
   }
 
   private resetProposal(): void {
-    if (!this.proposal || !this.editableContentEl) {
+    if (!this.editableContentEl) {
       return;
     }
 
-    this.editableContentEl.value = this.proposal.proposedContent;
+    this.editableContentEl.value = this.proposal?.proposedContent ?? this.reviewTarget.diff.newContent;
     this.refreshDiffFromEditedContent();
   }
 
@@ -312,9 +298,9 @@ export class DiffModal extends Modal {
         this.rejectedLines
       );
 
-      const currentContent = await this.app.vault.cachedRead(this.pendingDiff.file);
+      const currentContent = await this.app.vault.cachedRead(this.reviewTarget.file);
       if (this.hasConflictingChanges(currentContent)) {
-        this.handleConflict(result.content, "cherry-pick");
+        this.handleConflict();
         return;
       }
 
@@ -334,9 +320,9 @@ export class DiffModal extends Modal {
 
   private async handleAccept(content: string): Promise<void> {
     try {
-      const currentContent = await this.app.vault.cachedRead(this.pendingDiff.file);
+      const currentContent = await this.app.vault.cachedRead(this.reviewTarget.file);
       if (this.hasConflictingChanges(currentContent)) {
-        this.handleConflict(content, "accept");
+        this.handleConflict();
         return;
       }
 
@@ -357,104 +343,10 @@ export class DiffModal extends Modal {
   }
 
   private hasConflictingChanges(currentContent: string): boolean {
-    if (this.conflictMode === "block") {
-      return currentContent !== this.pendingDiff.diff.oldContent;
-    }
-
-    return currentContent !== this.pendingDiff.diff.newContent
-      && currentContent !== this.pendingDiff.diff.oldContent;
+    return currentContent !== this.reviewTarget.diff.oldContent;
   }
 
-  private handleConflict(content: string, action: "accept" | "cherry-pick"): void {
-    if (this.conflictMode === "block") {
-      new Notice("This note changed since the proposal was created. Reopen and regenerate the proposal.");
-      return;
-    }
-
-    this.showConflictWarning(content, action);
-  }
-
-  private showConflictWarning(content: string, action: "accept" | "cherry-pick"): void {
-    const conflictModal = new Modal(this.app);
-    conflictModal.titleEl.setText("File Has Changed");
-
-    conflictModal.contentEl.createEl("p", {
-      text: "This file was modified since the diff was generated. Proceeding will overwrite those changes.",
-    });
-
-    new Setting(conflictModal.contentEl)
-      .addButton((btn) =>
-        btn
-          .setButtonText("Proceed Anyway")
-          .setWarning()
-          .onClick(() => {
-            conflictModal.close();
-            if (action === "cherry-pick") {
-              this.result = {
-                action: "cherry-pick",
-                content,
-                acceptedLines: this.acceptedLines,
-                rejectedLines: this.rejectedLines,
-              };
-            } else {
-              this.result = { action: "accept", content };
-            }
-            this.close();
-          })
-      )
-      .addButton((btn) =>
-        btn
-          .setButtonText("Cancel")
-          .onClick(() => {
-            conflictModal.close();
-          })
-      );
-
-    conflictModal.open();
-  }
-}
-
-/**
- * Simple notification modal for when changes are detected
- */
-export class ChangeNotificationModal extends Modal {
-  constructor(
-    app: App,
-    private readonly fileName: string,
-    private readonly onReview: () => void,
-    private readonly onDismiss: () => void
-  ) {
-    super(app);
-  }
-
-  onOpen(): void {
-    this.titleEl.setText("External Changes Detected");
-    
-    this.contentEl.createEl("p", {
-      text: `The file "${this.fileName}" was modified externally. Would you like to review the changes?`,
-    });
-
-    new Setting(this.contentEl)
-      .addButton((btn) =>
-        btn
-          .setButtonText("Review Changes")
-          .setCta()
-          .onClick(() => {
-            this.close();
-            this.onReview();
-          })
-      )
-      .addButton((btn) =>
-        btn
-          .setButtonText("Dismiss")
-          .onClick(() => {
-            this.close();
-            this.onDismiss();
-          })
-      );
-  }
-
-  onClose(): void {
-    this.contentEl.empty();
+  private handleConflict(): void {
+    new Notice("This note changed since the proposal was created. Reopen and regenerate the proposal.");
   }
 }

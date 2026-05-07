@@ -19,12 +19,10 @@ export async function handleDiffResult(
   result: DiffModalResult,
   file: TFile,
   diffService: DiffService,
-  markAsSelfModified: (path: string) => void,
   options: DiffResultHandlerOptions = {},
 ): Promise<void> {
   if (result.action === "accept" && result.content) {
     try {
-      markAsSelfModified(file.path);
       await diffService.acceptChanges(file, result.content);
       new Notice("Changes applied successfully");
       await options.onApplied?.();
@@ -33,7 +31,6 @@ export async function handleDiffResult(
     }
   } else if (result.action === "cherry-pick" && result.content) {
     try {
-      markAsSelfModified(file.path);
       await diffService.acceptChanges(file, result.content);
       const accepted = result.acceptedLines?.size || 0;
       const rejected = result.rejectedLines?.size || 0;
