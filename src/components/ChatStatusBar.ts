@@ -20,7 +20,6 @@ export interface ChatStatusBarState {
     phase: ChatStatusBarRAGPhase;
     progress: number;
     previewPaths: string[];
-    idleDelayMs: number;
   };
   pdf: {
     filename: string | null;
@@ -178,8 +177,12 @@ export class ChatStatusBar {
     const signalEl = this.ragIndicatorEl.createSpan({ cls: "oa-chat-rag-indicator-signal" });
     if (state.rag.enabled && state.rag.phase !== "idle") {
       const progressRing = signalEl.createSpan({ cls: "oa-chat-rag-progress-ring" });
-      progressRing.toggleClass("is-computing", state.rag.phase === "computing");
-      progressRing.style.setProperty("--oa-rag-progress", `${Math.round(state.rag.progress * 100)}%`);
+      if (state.rag.phase === "waiting") {
+        progressRing.toggleClass("is-filling", true);
+        progressRing.style.setProperty("--oa-rag-progress", `${Math.round(state.rag.progress * 100)}%`);
+      } else {
+        progressRing.toggleClass("is-spinning", true);
+      }
     } else {
       const iconEl = signalEl.createSpan({ cls: "oa-chat-rag-indicator-icon" });
       setIcon(iconEl, "library");
@@ -231,11 +234,7 @@ export class ChatStatusBar {
     }
 
     if (state.rag.phase === "waiting") {
-      const remainingMs = Math.max(
-        0,
-        Math.ceil((1 - state.rag.progress) * state.rag.idleDelayMs),
-      );
-      return `Updating in ${remainingMs} ms`;
+      return "Waiting for typing to pause";
     }
 
     if (state.rag.phase === "computing") {
@@ -255,11 +254,7 @@ export class ChatStatusBar {
     }
 
     if (state.rag.phase === "waiting") {
-      const remainingMs = Math.max(
-        0,
-        Math.ceil((1 - state.rag.progress) * state.rag.idleDelayMs),
-      );
-      return `Draft preview updates in ${remainingMs} ms.`;
+      return "Draft preview will refresh after typing pauses.";
     }
 
     if (state.rag.phase === "computing") {

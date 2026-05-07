@@ -9,7 +9,7 @@ import { getUniqueChunkPaths } from "../utils/ragPreview";
 import type { VaultChunk } from "../services/VaultRAGService";
 
 export const CHAT_VIEW_TYPE = "obsidian-ai-chat-view";
-const DRAFT_RAG_PREVIEW_IDLE_MS = 700;
+const DRAFT_RAG_PREVIEW_IDLE_MS = 5000;
 const DRAFT_RAG_PREVIEW_TICK_MS = 50;
 
 export class ChatView extends ItemView {
@@ -41,7 +41,6 @@ export class ChatView extends ItemView {
   private draftRAGPreviewRequestId = 0;
   private draftRAGPreviewPhase: ChatStatusBarRAGPhase = "idle";
   private draftRAGPreviewProgress = 0;
-  private draftRAGPreviewStartedAt = 0;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -315,7 +314,6 @@ export class ChatView extends ItemView {
         phase: this.draftRAGPreviewPhase,
         progress: this.draftRAGPreviewProgress,
         previewPaths: getUniqueChunkPaths(this.previewRetrievedChunks),
-        idleDelayMs: DRAFT_RAG_PREVIEW_IDLE_MS,
       },
       pdf: {
         filename: this.pdfFilename,
@@ -368,7 +366,6 @@ export class ChatView extends ItemView {
     this.draftRAGPreviewRequestId += 1;
     this.draftRAGPreviewPhase = "idle";
     this.draftRAGPreviewProgress = 0;
-    this.draftRAGPreviewStartedAt = 0;
     this.previewRetrievedChunks = [];
   }
 
@@ -420,13 +417,20 @@ export class ChatView extends ItemView {
     this.stopDraftRAGPreviewTicking();
     this.draftRAGPreviewPhase = "waiting";
     this.draftRAGPreviewProgress = 0;
-    this.draftRAGPreviewStartedAt = Date.now();
     this.previewRetrievedChunks = [];
     this.renderStatusBar();
     this.draftRAGPreviewTickTimer = window.setInterval(() => {
-      const elapsed = Date.now() - this.draftRAGPreviewStartedAt;
-      this.draftRAGPreviewProgress = Math.max(0, Math.min(elapsed / DRAFT_RAG_PREVIEW_IDLE_MS, 1));
+      if (this.draftRAGPreviewPhase !== "waiting") {
+        this.stopDraftRAGPreviewTicking();
+        return;
+      }
+
+      this.draftRAGPreviewProgress = Math.min(
+        this.draftRAGPreviewProgress + (DRAFT_RAG_PREVIEW_TICK_MS / DRAFT_RAG_PREVIEW_IDLE_MS),
+        1,
+      );
       this.renderStatusBar();
+
       if (this.draftRAGPreviewProgress >= 1) {
         this.stopDraftRAGPreviewTicking();
       }
