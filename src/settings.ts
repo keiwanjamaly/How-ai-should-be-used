@@ -58,6 +58,7 @@ export class ObsidianAIChatSettingTab extends PluginSettingTab {
         text.inputEl.addClass("oa-settings-textarea");
       });
 
+    this.displayPDFSettings(containerEl);
     this.displayVaultRAGSettings(containerEl);
 
     // MCP Settings Section
@@ -241,19 +242,6 @@ export class ObsidianAIChatSettingTab extends PluginSettingTab {
         text.inputEl.rows = 5;
         text.inputEl.addClass("oa-settings-textarea");
       });
-
-    new Setting(containerEl)
-      .setName("OCR model")
-      .setDesc("Model used to extract text from uploaded PDF files. Must support document input (e.g. mistral/mistral-ocr-latest).")
-      .addText((text) =>
-        text
-          .setPlaceholder("mistral/mistral-ocr-latest")
-          .setValue(this.plugin.settings.ocrModel)
-          .onChange(async (value) => {
-            this.plugin.settings.ocrModel = value.trim() || "mistral/mistral-ocr-latest";
-            await this.plugin.saveSettings();
-          }),
-      );
   }
 
   private displayChatGPTSettings(containerEl: HTMLElement): void {
@@ -344,9 +332,58 @@ export class ObsidianAIChatSettingTab extends PluginSettingTab {
       );
 
     containerEl.createEl("p", {
-      text: "Plugin-managed MCP tools, PDF OCR, and vault embeddings remain OpenRouter-only for now.",
+      text: "Plugin-managed MCP tools remain OpenRouter-only for now. PDF OCR is configured separately below, and vault embeddings still rely on OpenRouter.",
       cls: "oa-settings-desc",
     });
+  }
+
+  private displayPDFSettings(containerEl: HTMLElement): void {
+    containerEl.createEl("h3", { text: "PDF Upload", cls: "oa-settings-section" });
+    containerEl.createEl("p", {
+      text: "PDF OCR uses Mistral directly and is configured independently from the chat provider.",
+      cls: "oa-settings-desc",
+    });
+
+    new Setting(containerEl)
+      .setName("Mistral API key")
+      .setDesc("Used to call Mistral's OCR endpoint directly for PDF extraction.")
+      .addText((text) => {
+        text.inputEl.type = "password";
+        return text
+          .setPlaceholder("...")
+          .setValue(this.plugin.settings.pdf.mistralApiKey)
+          .onChange(async (value) => {
+            this.plugin.settings.pdf.mistralApiKey = value.trim();
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(containerEl)
+      .setName("Mistral OCR model")
+      .setDesc("Direct Mistral OCR model name.")
+      .addText((text) =>
+        text
+          .setPlaceholder("mistral-ocr-latest")
+          .setValue(this.plugin.settings.pdf.mistralModel)
+          .onChange(async (value) => {
+            this.plugin.settings.pdf.mistralModel =
+              value.trim() || DEFAULT_SETTINGS.pdf.mistralModel;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Bib PDF folder")
+      .setDesc("Absolute folder for JabRef-style BibTeX attachment filenames referenced from literature notes.")
+      .addText((text) =>
+        text
+          .setPlaceholder("/absolute/path/to/pdfs")
+          .setValue(this.plugin.settings.pdf.bibAttachmentRoot)
+          .onChange(async (value) => {
+            this.plugin.settings.pdf.bibAttachmentRoot = value.trim();
+            await this.plugin.saveSettings();
+          }),
+      );
   }
 
   /**

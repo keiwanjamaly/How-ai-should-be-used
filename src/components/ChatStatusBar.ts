@@ -22,7 +22,12 @@ export interface ChatStatusBarState {
     previewPaths: string[];
   };
   pdf: {
-    filename: string | null;
+    manualFilename: string | null;
+    bib: {
+      filename: string;
+      status: "preparing" | "ready" | "error";
+      title: string;
+    } | null;
   };
 }
 
@@ -45,7 +50,8 @@ export class ChatStatusBar {
   private readonly ragToggleEl: HTMLButtonElement;
   private readonly ragIndicatorEl: HTMLDivElement;
   private readonly attachmentClusterEl: HTMLDivElement;
-  private readonly pdfChipEl: HTMLDivElement;
+  private readonly manualPDFChipEl: HTMLDivElement;
+  private readonly bibPDFChipEl: HTMLDivElement;
 
   constructor(private readonly options: ChatStatusBarOptions) {
     this.rootEl = options.parent.createDiv({ cls: "oa-chat-status-bar" });
@@ -78,7 +84,8 @@ export class ChatStatusBar {
     this.ragIndicatorEl = this.ragClusterEl.createDiv({ cls: "oa-chat-rag-indicator" });
 
     this.attachmentClusterEl = this.rootEl.createDiv({ cls: "oa-chat-status-attachment" });
-    this.pdfChipEl = this.attachmentClusterEl.createDiv({ cls: "oa-chat-pdf-chip" });
+    this.manualPDFChipEl = this.attachmentClusterEl.createDiv({ cls: "oa-chat-pdf-chip" });
+    this.bibPDFChipEl = this.attachmentClusterEl.createDiv({ cls: "oa-chat-pdf-chip" });
 
     if (options.preserveMarkdownContextOnPointerDown) {
       options.preserveMarkdownContextOnPointerDown(this.contextToggleEl);
@@ -92,7 +99,7 @@ export class ChatStatusBar {
     this.renderSelectionChip(state);
     this.renderRAGToggle(state);
     this.renderRAGIndicator(state);
-    this.renderPDFChip(state);
+    this.renderPDFChips(state);
   }
 
   private renderContextToggle(state: ChatStatusBarState): void {
@@ -194,22 +201,34 @@ export class ChatStatusBar {
     this.ragIndicatorEl.setAttr("title", this.getRAGBadgeTitle(state));
   }
 
-  private renderPDFChip(state: ChatStatusBarState): void {
-    this.pdfChipEl.empty();
+  private renderPDFChips(state: ChatStatusBarState): void {
+    this.renderManualPDFChip(state.pdf.manualFilename);
+    this.renderBibPDFChip(state.pdf.bib);
 
-    if (!state.pdf.filename) {
+    if (!state.pdf.manualFilename && !state.pdf.bib) {
       this.attachmentClusterEl.hide();
       return;
     }
 
-    const iconEl = this.pdfChipEl.createSpan({ cls: "oa-chat-pdf-chip-icon" });
+    this.attachmentClusterEl.show();
+  }
+
+  private renderManualPDFChip(filename: string | null): void {
+    this.manualPDFChipEl.empty();
+
+    if (!filename) {
+      this.manualPDFChipEl.hide();
+      return;
+    }
+
+    const iconEl = this.manualPDFChipEl.createSpan({ cls: "oa-chat-pdf-chip-icon" });
     setIcon(iconEl, "file-text");
-    const textEl = this.pdfChipEl.createSpan({ cls: "oa-chat-pdf-chip-text" });
+    const textEl = this.manualPDFChipEl.createSpan({ cls: "oa-chat-pdf-chip-text" });
     textEl.createSpan({ cls: "oa-chat-pdf-chip-label", text: "PDF" });
     textEl.createSpan({ cls: "oa-chat-pdf-chip-separator", text: "·" });
-    textEl.createSpan({ cls: "oa-chat-pdf-chip-name", text: state.pdf.filename });
+    textEl.createSpan({ cls: "oa-chat-pdf-chip-name", text: filename });
 
-    const dismissBtn = this.pdfChipEl.createEl("button", {
+    const dismissBtn = this.manualPDFChipEl.createEl("button", {
       cls: "oa-chat-pdf-chip-dismiss",
       attr: { title: "Remove PDF context", "aria-label": "Remove PDF" },
     });
@@ -220,7 +239,40 @@ export class ChatStatusBar {
       this.options.preserveMarkdownContextOnPointerDown(dismissBtn);
     }
 
-    this.attachmentClusterEl.show();
+    this.manualPDFChipEl.show();
+  }
+
+  private renderBibPDFChip(state: ChatStatusBarState["pdf"]["bib"]): void {
+    this.bibPDFChipEl.empty();
+
+    if (!state) {
+      this.bibPDFChipEl.hide();
+      return;
+    }
+
+    const iconEl = this.bibPDFChipEl.createSpan({ cls: "oa-chat-pdf-chip-icon" });
+    setIcon(
+      iconEl,
+      state.status === "preparing"
+        ? "loader-circle"
+        : state.status === "ready"
+          ? "check"
+          : "alert-circle",
+    );
+    if (state.status === "preparing") {
+      iconEl.addClass("is-spinning");
+    }
+    const textEl = this.bibPDFChipEl.createSpan({ cls: "oa-chat-pdf-chip-text" });
+    textEl.createSpan({ cls: "oa-chat-pdf-chip-label", text: "Bib PDF" });
+    textEl.createSpan({ cls: "oa-chat-pdf-chip-separator", text: "·" });
+    textEl.createSpan({ cls: "oa-chat-pdf-chip-name", text: state.filename });
+    textEl.createSpan({ cls: "oa-chat-pdf-chip-separator", text: "·" });
+    textEl.createSpan({
+      cls: "oa-chat-pdf-chip-status",
+      text: state.status === "preparing" ? "Preparing" : state.status === "ready" ? "Ready" : "Error",
+    });
+    this.bibPDFChipEl.setAttr("title", state.title);
+    this.bibPDFChipEl.show();
   }
 
   private getRAGDetailText(state: ChatStatusBarState): string {

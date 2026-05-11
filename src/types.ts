@@ -36,6 +36,12 @@ export interface ChatGPTSettings {
   favoriteModels: string[];
 }
 
+export interface PDFSettings {
+  mistralApiKey: string;
+  mistralModel: string;
+  bibAttachmentRoot: string;
+}
+
 export interface VaultRAGSettings {
   enabled: boolean;
   maxChunks: number;
@@ -56,13 +62,13 @@ export interface ObsidianAIChatSettings {
   provider: AIProvider;
   openRouter: OpenRouterSettings;
   chatgpt: ChatGPTSettings;
+  pdf: PDFSettings;
   vaultRAG: VaultRAGSettings;
   systemPrompt: string;
   mcp: MCPSettings;
   chatSessions: ChatSession[];
   activeSessionId: string | null;
   favoriteModels: string[];
-  ocrModel: string;
 }
 
 export const DEFAULT_SETTINGS: ObsidianAIChatSettings = {
@@ -75,6 +81,11 @@ export const DEFAULT_SETTINGS: ObsidianAIChatSettings = {
     cliPath: "codex",
     model: "gpt-5",
     favoriteModels: ["gpt-5", "gpt-5-mini"],
+  },
+  pdf: {
+    mistralApiKey: "",
+    mistralModel: "mistral-ocr-latest",
+    bibAttachmentRoot: "",
   },
   vaultRAG: {
     enabled: false,
@@ -89,5 +100,4 @@ export const DEFAULT_SETTINGS: ObsidianAIChatSettings = {
   chatSessions: [],
   activeSessionId: null,
   favoriteModels: ["openai/gpt-4o-mini", "anthropic/claude-3.5-sonnet", "google/gemini-flash-1.5"],
-  ocrModel: "mistral/mistral-ocr-latest",
 };

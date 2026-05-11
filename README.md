@@ -13,7 +13,7 @@ This is an early desktop-only release intended for friends, testers, and anyone 
 - Optionally retrieve relevant snippets from a persistent embedded vault index
 - See vault RAG indexing coverage in the Obsidian status bar
 - Stream responses directly into the chat UI
-- Upload PDFs for OCR through the configured OpenRouter model
+- Upload PDFs for OCR through Mistral before sending the text to the chat model
 
 ## Requirements
 
@@ -76,7 +76,7 @@ This plugin sends data to the provider you select when you use it.
 - If note context is enabled, the active note content is sent with your request
 - If vault RAG is enabled, relevant markdown snippets from across your vault are sent with your request
 - If vault embeddings are enabled, eligible text chunks are sent to OpenRouter for embedding during indexing and query retrieval
-- If you use PDF upload, the selected PDF is sent to OpenRouter for OCR/extraction
+- If you use PDF upload, the selected PDF is sent to Mistral for OCR/extraction
 - OpenRouter API keys and chat session data are stored in the plugin data inside your vault's Obsidian config
 - ChatGPT/Codex mode does not store an API key in the plugin; it relies on your local Codex login instead
 

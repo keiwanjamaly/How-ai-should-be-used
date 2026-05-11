@@ -1355,6 +1355,10 @@
   color: var(--text-muted);
 }
 
+.oa-chat-pdf-chip-icon.is-spinning .svg-icon {
+  animation: oa-rag-progress-spin 0.8s linear infinite;
+}
+
 .oa-chat-pdf-chip-text {
   display: inline-flex;
   align-items: center;

@@ -7,10 +7,77 @@ import type { ActiveNoteEditProposal, ToolExecutionEvent } from "../types/tools"
 import { formatErrorMessage } from "../utils/errorUtils";
 import { getUniqueChunkPaths } from "../utils/ragPreview";
 import type { VaultChunk } from "../services/VaultRAGService";
+import {
+  createIdleBibPDFPreparationState,
+  getReadyBibPDFContext,
+  type BibPDFPreparationState,
+} from "../services/BibPDFPreparationService";
 
 export const CHAT_VIEW_TYPE = "obsidian-ai-chat-view";
 const DRAFT_RAG_PREVIEW_IDLE_MS = 5000;
 const DRAFT_RAG_PREVIEW_TICK_MS = 50;
+
+export function buildPDFContextMessage(filename: string, text: string): ChatMessage {
+  return {
+    role: ChatRole.System,
+    content: `Extracted PDF content from "${filename}":\n---\n${text}\n---`,
+  };
+}
+
+export function buildPDFContextMessages(
+  manualPDF: { filename: string; text: string } | null,
+  bibPDF: { filename: string; text: string } | null,
+): ChatMessage[] {
+  const messages: ChatMessage[] = [];
+  if (manualPDF) {
+    messages.push(buildPDFContextMessage(manualPDF.filename, manualPDF.text));
+  }
+  if (bibPDF) {
+    messages.push(buildPDFContextMessage(bibPDF.filename, bibPDF.text));
+  }
+  return messages;
+}
+
+export function buildBibPDFChipState(
+  state: BibPDFPreparationState,
+  includeFileContext: boolean,
+  activeNotePath: string | null,
+): ChatStatusBarState["pdf"]["bib"] {
+  if (
+    !includeFileContext
+    || !state.filename
+    || state.status === "idle"
+    || state.notePath !== activeNotePath
+  ) {
+    return null;
+  }
+
+  if (state.status === "preparing") {
+    return {
+      filename: state.filename,
+      status: "preparing",
+      title: "Bib PDF OCR is running for the active note.",
+    };
+  }
+
+  if (state.status === "ready") {
+    return {
+      filename: state.filename,
+      status: "ready",
+      title: state.source === "cache"
+        ? "Bib PDF OCR text is ready from cache."
+        : "Bib PDF OCR text is ready.",
+    };
+  }
+
+  return {
+    filename: state.filename,
+    status: "error",
+    title: state.errorMessage
+      ? `Bib PDF OCR failed: ${state.errorMessage}`
+      : "Bib PDF OCR failed.",
+  };
+}
 
 export class ChatView extends ItemView {
   private messages: ChatMessage[] = [];
@@ -22,8 +89,8 @@ export class ChatView extends ItemView {
   private statusBar!: ChatStatusBar;
   private sessionSelectorEl!: HTMLSelectElement;
   private currentSessionId: string | null = null;
-  private pdfExtractedText: string | null = null;
-  private pdfFilename: string | null = null;
+  private manualPDFContext: { filename: string; text: string } | null = null;
+  private bibPDFState: BibPDFPreparationState = createIdleBibPDFPreparationState();
   private pdfUploadBtnEl!: HTMLButtonElement;
   private pdfFileInputEl!: HTMLInputElement;
   private currentAbortController: AbortController | null = null;
@@ -117,6 +184,10 @@ export class ChatView extends ItemView {
       onToggleRAG: () => this.toggleRAG(),
       onRemovePDF: () => this.clearPDFContext(),
     });
+    this.register(this.plugin.bibPDFPreparationService.onStateChange((state) => {
+      this.bibPDFState = state;
+      this.renderStatusBar();
+    }));
     this.renderStatusBar();
 
     this.pdfFileInputEl = this.containerEl.createEl("input", {
@@ -182,6 +253,19 @@ export class ChatView extends ItemView {
         this.plugin.internalToolService.captureMarkdownViewContext();
         this.renderStatusBar();
         this.scheduleDraftRAGPreview();
+      })
+    );
+
+    this.registerEvent(
+      this.app.vault.on("modify", (file) => {
+        if (!(file instanceof TFile)) {
+          return;
+        }
+        if (file.path !== this.getActiveFile()?.path) {
+          return;
+        }
+        this.plugin.internalToolService.captureMarkdownViewContext();
+        this.renderStatusBar();
       })
     );
 
@@ -316,7 +400,8 @@ export class ChatView extends ItemView {
         previewPaths: getUniqueChunkPaths(this.previewRetrievedChunks),
       },
       pdf: {
-        filename: this.pdfFilename,
+        manualFilename: this.manualPDFContext?.filename ?? null,
+        bib: this.buildBibPDFChipState(),
       },
     };
   }
@@ -907,12 +992,13 @@ export class ChatView extends ItemView {
       requestMessages.push(vaultContext);
     }
 
-    if (this.pdfExtractedText && this.pdfFilename) {
-      requestMessages.push({
-        role: ChatRole.System,
-        content: `Extracted PDF content from "${this.pdfFilename}":\n---\n${this.pdfExtractedText}\n---`,
-      });
-    }
+    requestMessages.push(...buildPDFContextMessages(
+      this.manualPDFContext,
+      getReadyBibPDFContext(
+        this.bibPDFState,
+        this.includeFileContext ? this.getActiveFile()?.path ?? null : null,
+      ),
+    ));
 
     requestMessages.push(
       ...this.messages.filter((message) => message.content?.trim()),
@@ -999,15 +1085,20 @@ export class ChatView extends ItemView {
   private async handlePDFUpload(file: File): Promise<void> {
     if (this.busy) return;
 
+    const availabilityError = this.plugin.getPDFUploadError();
+    if (availabilityError) {
+      new Notice(availabilityError);
+      return;
+    }
+
     new Notice(`Extracting text from ${file.name}…`);
     this.pdfUploadBtnEl.disabled = true;
 
     try {
-      const text = await this.performOCR(file);
-      this.pdfExtractedText = text;
-      this.pdfFilename = file.name;
+      const extracted = await this.plugin.pdfExtractionService.extract(file);
+      this.manualPDFContext = extracted;
       this.renderStatusBar();
-      new Notice(`PDF extracted: ${file.name}`);
+      new Notice(`PDF extracted: ${extracted.filename}`);
     } catch (error) {
       new Notice(`PDF extraction failed: ${formatErrorMessage(error)}`);
     } finally {
@@ -1015,67 +1106,17 @@ export class ChatView extends ItemView {
     }
   }
 
-  private async performOCR(file: File): Promise<string> {
-    if (!this.plugin.supportsPDFUpload()) {
-      throw new Error("PDF OCR is only available when using the OpenRouter provider.");
-    }
-
-    const buffer = await file.arrayBuffer();
-
-    // Chunked base64 encoding to avoid stack overflow on large files
-    const bytes = new Uint8Array(buffer);
-    let binary = "";
-    const chunkSize = 8192;
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-      binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-    }
-    const base64 = btoa(binary);
-
-    const apiKey = this.plugin.settings.openRouter.apiKey;
-    if (!apiKey) throw new Error("OpenRouter API key is not set");
-
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: this.plugin.settings.ocrModel,
-        stream: false,
-        messages: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "document_url",
-                document_url: `data:application/pdf;base64,${base64}`,
-              },
-            ],
-          },
-        ],
-      }),
-    });
-
-    if (!response.ok) {
-      let msg = `OCR request failed (${response.status})`;
-      try {
-        const json = await response.json() as { error?: { message?: string } };
-        if (json.error?.message) msg = json.error.message;
-      } catch { /* ignore */ }
-      throw new Error(msg);
-    }
-
-    const json = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
-    const content = json.choices?.[0]?.message?.content ?? "";
-    if (!content) throw new Error("OCR model returned empty content");
-    return content;
+  private clearPDFContext(): void {
+    this.manualPDFContext = null;
+    this.renderStatusBar();
   }
 
-  private clearPDFContext(): void {
-    this.pdfExtractedText = null;
-    this.pdfFilename = null;
-    this.renderStatusBar();
+  private buildBibPDFChipState(): ChatStatusBarState["pdf"]["bib"] {
+    return buildBibPDFChipState(
+      this.bibPDFState,
+      this.includeFileContext,
+      this.getActiveFile()?.path ?? null,
+    );
   }
 
   private async handleSend(): Promise<void> {

@@ -29,8 +29,12 @@ import type {
 } from "./types/tools";
 import { fetchCodexAvailableModels } from "./services/CodexModels";
 import type { VaultRAGIndexStatus } from "./services/VaultRAGService";
-import { normalizeExtensions } from "./utils/vaultEmbeddings";
 import { cachedSelectionHighlightExtension } from "./editor/CachedSelectionHighlight";
+import { PDFExtractionService } from "./services/PDFExtractionService";
+import { BibPDFContextService } from "./services/BibPDFContextService";
+import { PDFOCRCacheService } from "./services/PDFOCRCacheService";
+import { BibPDFPreparationService } from "./services/BibPDFPreparationService";
+import { resolveSettings } from "./utils/settings";
 
 export default class ObsidianAIChatPlugin extends Plugin {
   settings!: ObsidianAIChatSettings;
@@ -38,6 +42,10 @@ export default class ObsidianAIChatPlugin extends Plugin {
   mcpService!: MCPService;
   internalToolService!: InternalToolService;
   vaultRAGService!: VaultRAGService;
+  pdfExtractionService!: PDFExtractionService;
+  bibPDFContextService!: BibPDFContextService;
+  pdfOCRCacheService!: PDFOCRCacheService;
+  bibPDFPreparationService!: BibPDFPreparationService;
   private vaultRAGStatusEl!: HTMLElement;
   private resolvedMCPServers: MCPServers = {};
   private codexModelsRefreshPromise: Promise<string[]> | null = null;
@@ -50,6 +58,20 @@ export default class ObsidianAIChatPlugin extends Plugin {
     this.mcpService = new MCPService();
     this.internalToolService = new InternalToolService(this.app);
     this.vaultRAGService = new VaultRAGService(this.app, this.manifest.id, () => this.settings);
+    this.pdfExtractionService = new PDFExtractionService(() => this.settings);
+    this.bibPDFContextService = new BibPDFContextService(
+      this.app,
+      () => this.settings,
+      (path) => this.readAbsoluteTextFile(path),
+      (path) => this.absoluteFileExists(path),
+    );
+    this.pdfOCRCacheService = new PDFOCRCacheService(this.app, this.manifest.id);
+    this.bibPDFPreparationService = new BibPDFPreparationService(
+      this.bibPDFContextService,
+      this.pdfExtractionService,
+      this.pdfOCRCacheService,
+      (path) => this.readAbsoluteBinaryFile(path),
+    );
     this.vaultRAGStatusEl = this.addStatusBarItem();
     this.vaultRAGStatusEl.addClass("oa-rag-status");
     this.register(() => this.vaultRAGStatusEl.remove());
@@ -103,6 +125,20 @@ export default class ObsidianAIChatPlugin extends Plugin {
       }
     }));
 
+    this.registerEvent(this.app.workspace.on("active-leaf-change", () => {
+      void this.bibPDFPreparationService.refreshForActiveFile(this.app.workspace.getActiveFile());
+    }));
+
+    this.registerEvent(this.app.vault.on("modify", (file) => {
+      if (!(file instanceof TFile)) {
+        return;
+      }
+      if (file.path !== this.app.workspace.getActiveFile()?.path) {
+        return;
+      }
+      void this.bibPDFPreparationService.refreshForActiveFile(file);
+    }));
+
     this.registerEditorExtension(cachedSelectionHighlightExtension);
 
     // Initialize MCP servers if enabled
@@ -142,6 +178,7 @@ export default class ObsidianAIChatPlugin extends Plugin {
     });
 
     this.app.workspace.onLayoutReady(() => {
+      void this.bibPDFPreparationService.refreshForActiveFile(this.app.workspace.getActiveFile());
       void this.refreshVaultRAGIndex();
       void this.activateView();
     });
@@ -207,7 +244,11 @@ export default class ObsidianAIChatPlugin extends Plugin {
   }
 
   supportsPDFUpload(): boolean {
-    return this.settings.provider === "openrouter";
+    return this.pdfExtractionService.supportsUpload();
+  }
+
+  getPDFUploadError(): string | null {
+    return this.pdfExtractionService.getAvailabilityError();
   }
 
   async refreshVaultRAGIndex(): Promise<void> {
@@ -320,36 +361,38 @@ export default class ObsidianAIChatPlugin extends Plugin {
 
   async loadSettings(): Promise<void> {
     const loaded = (await this.loadData()) as Partial<ObsidianAIChatSettings> | null;
-
-    this.settings = {
-      ...DEFAULT_SETTINGS,
-      ...loaded,
-      openRouter: {
-        ...DEFAULT_SETTINGS.openRouter,
-        ...loaded?.openRouter,
-      },
-      chatgpt: {
-        ...DEFAULT_SETTINGS.chatgpt,
-        ...loaded?.chatgpt,
-      },
-      vaultRAG: {
-        ...DEFAULT_SETTINGS.vaultRAG,
-        ...loaded?.vaultRAG,
-        embeddingModel:
-          loaded?.vaultRAG?.embeddingModel?.trim() || DEFAULT_SETTINGS.vaultRAG.embeddingModel,
-        includeExtensions: normalizeExtensions(
-          loaded?.vaultRAG?.includeExtensions ?? DEFAULT_SETTINGS.vaultRAG.includeExtensions,
-        ),
-      },
-      chatSessions: loaded?.chatSessions ?? DEFAULT_SETTINGS.chatSessions,
-      activeSessionId: loaded?.activeSessionId ?? DEFAULT_SETTINGS.activeSessionId,
-      favoriteModels: loaded?.favoriteModels ?? DEFAULT_SETTINGS.favoriteModels,
-      ocrModel: loaded?.ocrModel ?? DEFAULT_SETTINGS.ocrModel,
-    };
+    this.settings = resolveSettings(loaded);
   }
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
+  }
+
+  async readAbsoluteTextFile(path: string): Promise<string> {
+    const fs = require("fs").promises;
+    return fs.readFile(path, "utf-8");
+  }
+
+  async readAbsoluteBinaryFile(path: string): Promise<ArrayBuffer> {
+    const fs = require("fs").promises;
+    const buffer = await fs.readFile(path);
+    return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+  }
+
+  async absoluteFileExists(path: string): Promise<boolean> {
+    const fs = require("fs").promises;
+    try {
+      await fs.access(path);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async getAbsoluteFileMtime(path: string): Promise<number> {
+    const fs = require("fs").promises;
+    const stats = await fs.stat(path);
+    return stats.mtimeMs;
   }
 
   private updateVaultRAGStatusBar(status: VaultRAGIndexStatus): void {
