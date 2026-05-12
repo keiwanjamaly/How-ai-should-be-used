@@ -35,6 +35,7 @@ import { BibPDFContextService } from "./services/BibPDFContextService";
 import { PDFOCRCacheService } from "./services/PDFOCRCacheService";
 import { BibPDFPreparationService } from "./services/BibPDFPreparationService";
 import { resolveSettings } from "./utils/settings";
+import { openAbsolutePathWithShell } from "./utils/openDefaultApp";
 
 export default class ObsidianAIChatPlugin extends Plugin {
   settings!: ObsidianAIChatSettings;
@@ -393,6 +394,21 @@ export default class ObsidianAIChatPlugin extends Plugin {
     const fs = require("fs").promises;
     const stats = await fs.stat(path);
     return stats.mtimeMs;
+  }
+
+  async openAbsolutePathInDefaultApp(path: string): Promise<void> {
+    if (!Platform.isDesktopApp) {
+      new Notice("Opening PDFs in the default viewer is only supported on desktop.");
+      return;
+    }
+
+    try {
+      const { shell } = require("electron") as { shell: { openPath: (targetPath: string) => Promise<string> } };
+      await openAbsolutePathWithShell(path, shell);
+    } catch (error) {
+      console.error("Failed to open PDF in default viewer:", error);
+      new Notice(`Failed to open PDF: ${formatErrorMessage(error)}`);
+    }
   }
 
   private updateVaultRAGStatusBar(status: VaultRAGIndexStatus): void {

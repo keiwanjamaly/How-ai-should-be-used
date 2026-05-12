@@ -46,6 +46,7 @@ export function buildBibPDFChipState(
   if (
     !includeFileContext
     || !state.filename
+    || !state.pdfPath
     || state.status === "idle"
     || state.notePath !== activeNotePath
   ) {
@@ -55,6 +56,7 @@ export function buildBibPDFChipState(
   if (state.status === "preparing") {
     return {
       filename: state.filename,
+      pdfPath: state.pdfPath,
       status: "preparing",
       title: "Bib PDF OCR is running for the active note.",
     };
@@ -63,6 +65,7 @@ export function buildBibPDFChipState(
   if (state.status === "ready") {
     return {
       filename: state.filename,
+      pdfPath: state.pdfPath,
       status: "ready",
       title: state.source === "cache"
         ? "Bib PDF OCR text is ready from cache."
@@ -72,6 +75,7 @@ export function buildBibPDFChipState(
 
   return {
     filename: state.filename,
+    pdfPath: state.pdfPath,
     status: "error",
     title: state.errorMessage
       ? `Bib PDF OCR failed: ${state.errorMessage}`
@@ -180,9 +184,11 @@ export class ChatView extends ItemView {
     this.statusBar = new ChatStatusBar({
       parent: composer,
       preserveMarkdownContextOnPointerDown: (element) => this.preserveMarkdownContextOnPointerDown(element),
+      captureMarkdownContextOnPointerDown: (element) => this.captureMarkdownContextOnPointerDown(element),
       onToggleContext: () => this.toggleFileContext(),
       onToggleRAG: () => this.toggleRAG(),
       onRemovePDF: () => this.clearPDFContext(),
+      onOpenPDF: (path) => { void this.plugin.openAbsolutePathInDefaultApp(path); },
     });
     this.register(this.plugin.bibPDFPreparationService.onStateChange((state) => {
       this.bibPDFState = state;
@@ -348,6 +354,12 @@ export class ChatView extends ItemView {
     element.addEventListener("pointerdown", () => {
       this.plugin.internalToolService.captureMarkdownViewContext();
       this.renderStatusBar();
+    });
+  }
+
+  private captureMarkdownContextOnPointerDown(element: HTMLElement): void {
+    element.addEventListener("pointerdown", () => {
+      this.plugin.internalToolService.captureMarkdownViewContext();
     });
   }
 

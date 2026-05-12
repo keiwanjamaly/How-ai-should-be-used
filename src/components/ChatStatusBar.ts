@@ -25,6 +25,7 @@ export interface ChatStatusBarState {
     manualFilename: string | null;
     bib: {
       filename: string;
+      pdfPath: string;
       status: "preparing" | "ready" | "error";
       title: string;
     } | null;
@@ -34,16 +35,86 @@ export interface ChatStatusBarState {
 interface ChatStatusBarOptions {
   parent: HTMLElement;
   preserveMarkdownContextOnPointerDown?: (element: HTMLElement) => void;
+  captureMarkdownContextOnPointerDown?: (element: HTMLElement) => void;
   onToggleContext: () => void;
   onToggleRAG: () => void;
   onRemovePDF: () => void;
+  onOpenPDF: (path: string) => void;
+}
+
+export function getContextSummaryTitle(state: ChatStatusBarState): string {
+  if (!state.context.enabled) {
+    return "File context is disabled for this chat.";
+  }
+
+  const parts: string[] = ["File context is enabled for this chat."];
+
+  if (state.context.fileName) {
+    parts.push(`File: ${state.context.fileName}`);
+  }
+
+  if (state.context.selection) {
+    parts.push(`Cached selection ${state.context.selection.lineRange}`);
+    parts.push("");
+    parts.push(state.context.selection.fullText);
+  }
+
+  return parts.join("\n");
+}
+
+export function getRAGDetailText(state: ChatStatusBarState): string {
+  if (!state.rag.enabled) {
+    return "Off";
+  }
+
+  if (state.rag.previewPaths.length > 0) {
+    const count = state.rag.previewPaths.length;
+    return `${count} ${count === 1 ? "note" : "notes"} queued`;
+  }
+
+  if (state.rag.phase === "waiting") {
+    return "Waiting for typing to pause";
+  }
+
+  if (state.rag.phase === "computing") {
+    return "Scanning notes";
+  }
+
+  return "Ready";
+}
+
+export function getRAGBadgeTitle(state: ChatStatusBarState): string {
+  if (!state.rag.enabled) {
+    return "Vault RAG is disabled for this chat.";
+  }
+
+  if (state.rag.previewPaths.length > 0) {
+    return `Draft preview would use:\n${state.rag.previewPaths.join("\n")}`;
+  }
+
+  if (state.rag.phase === "waiting") {
+    return "Draft preview will refresh after typing pauses.";
+  }
+
+  if (state.rag.phase === "computing") {
+    return "Computing draft preview now.";
+  }
+
+  return "Vault-wide retrieval is enabled for this chat. Pause typing to preview which notes would be used.";
+}
+
+export function getManualPDFTitle(filename: string): string {
+  return `Manual PDF attached: ${filename}`;
+}
+
+export function getBibPDFTitle(state: NonNullable<ChatStatusBarState["pdf"]["bib"]>): string {
+  return `${state.title}\n\nFile: ${state.filename}\nClick to open in your default PDF viewer.`;
 }
 
 export class ChatStatusBar {
   private readonly rootEl: HTMLDivElement;
   private readonly leftClusterEl: HTMLDivElement;
   private readonly contextToggleEl: HTMLButtonElement;
-  private readonly contextMetaGroupEl: HTMLDivElement;
   private readonly contextMetaEl: HTMLDivElement;
   private readonly selectionChipEl: HTMLDivElement;
   private readonly ragClusterEl: HTMLDivElement;
@@ -51,7 +122,7 @@ export class ChatStatusBar {
   private readonly ragIndicatorEl: HTMLDivElement;
   private readonly attachmentClusterEl: HTMLDivElement;
   private readonly manualPDFChipEl: HTMLDivElement;
-  private readonly bibPDFChipEl: HTMLDivElement;
+  private readonly bibPDFChipEl: HTMLButtonElement;
 
   constructor(private readonly options: ChatStatusBarOptions) {
     this.rootEl = options.parent.createDiv({ cls: "oa-chat-status-bar" });
@@ -64,11 +135,10 @@ export class ChatStatusBar {
         "aria-label": "Toggle file context",
       },
     });
-    this.contextToggleEl.createSpan({ cls: "oa-chat-meta-toggle-label", text: "Context" });
+    setIcon(this.contextToggleEl, "file-text");
     this.contextToggleEl.addEventListener("click", () => this.options.onToggleContext());
 
-    this.contextMetaGroupEl = this.leftClusterEl.createDiv({ cls: "oa-chat-context-meta-group" });
-    this.contextMetaEl = this.contextMetaGroupEl.createDiv({ cls: "oa-chat-context-meta" });
+    this.contextMetaEl = this.leftClusterEl.createDiv({ cls: "oa-chat-context-meta" });
     this.selectionChipEl = this.leftClusterEl.createDiv({ cls: "oa-chat-selection-chip" });
 
     this.ragClusterEl = this.rootEl.createDiv({ cls: "oa-chat-status-rag" });
@@ -79,17 +149,30 @@ export class ChatStatusBar {
         "aria-label": "Toggle Vault RAG",
       },
     });
-    this.ragToggleEl.createSpan({ cls: "oa-chat-meta-toggle-label", text: "RAG" });
+    setIcon(this.ragToggleEl, "library");
     this.ragToggleEl.addEventListener("click", () => this.options.onToggleRAG());
     this.ragIndicatorEl = this.ragClusterEl.createDiv({ cls: "oa-chat-rag-indicator" });
 
     this.attachmentClusterEl = this.rootEl.createDiv({ cls: "oa-chat-status-attachment" });
     this.manualPDFChipEl = this.attachmentClusterEl.createDiv({ cls: "oa-chat-pdf-chip" });
-    this.bibPDFChipEl = this.attachmentClusterEl.createDiv({ cls: "oa-chat-pdf-chip" });
+    this.bibPDFChipEl = this.attachmentClusterEl.createEl("button", {
+      cls: "oa-chat-pdf-chip oa-chat-pdf-chip-button",
+      attr: { type: "button", "aria-label": "Open linked PDF" },
+    });
+    this.bibPDFChipEl.addEventListener("click", () => {
+      const pdfPath = this.bibPDFChipEl.dataset.pdfPath;
+      if (!pdfPath) {
+        return;
+      }
+      this.options.onOpenPDF(pdfPath);
+    });
 
     if (options.preserveMarkdownContextOnPointerDown) {
       options.preserveMarkdownContextOnPointerDown(this.contextToggleEl);
       options.preserveMarkdownContextOnPointerDown(this.ragToggleEl);
+    }
+    if (options.captureMarkdownContextOnPointerDown) {
+      options.captureMarkdownContextOnPointerDown(this.bibPDFChipEl);
     }
   }
 
@@ -105,27 +188,32 @@ export class ChatStatusBar {
   private renderContextToggle(state: ChatStatusBarState): void {
     this.contextToggleEl.toggleClass("is-enabled", state.context.enabled);
     this.contextToggleEl.toggleClass("is-disabled", !state.context.enabled);
+    this.contextToggleEl.setAttr(
+      "title",
+      state.context.enabled ? "Disable file context for this chat" : "Enable file context for this chat",
+    );
+    this.contextToggleEl.setAttr(
+      "aria-label",
+      state.context.enabled ? "Disable file context" : "Enable file context",
+    );
   }
 
   private renderContextMeta(state: ChatStatusBarState): void {
     this.contextMetaEl.empty();
 
     if (!state.context.enabled) {
-      this.contextMetaGroupEl.hide();
+      this.contextMetaEl.hide();
       return;
     }
 
+    const iconEl = this.contextMetaEl.createSpan({ cls: "oa-chat-context-meta-icon" });
+    setIcon(iconEl, state.context.selection ? "quote-glyph" : "paperclip");
     if (state.context.fileName) {
-      const iconEl = this.contextMetaEl.createSpan({ cls: "oa-chat-context-meta-icon" });
-      setIcon(iconEl, "paperclip");
-      const textEl = this.contextMetaEl.createSpan({ cls: "oa-chat-context-meta-text" });
-      textEl.createSpan({ cls: "oa-chat-context-meta-file", text: state.context.fileName });
-      this.contextMetaEl.show();
-    } else {
-      this.contextMetaEl.hide();
+      this.contextMetaEl.createSpan({ cls: "oa-chat-context-meta-marker" });
     }
 
-    this.contextMetaGroupEl.show();
+    this.contextMetaEl.setAttr("title", getContextSummaryTitle(state));
+    this.contextMetaEl.show();
   }
 
   private renderSelectionChip(state: ChatStatusBarState): void {
@@ -138,10 +226,6 @@ export class ChatStatusBar {
 
     const iconEl = this.selectionChipEl.createSpan({ cls: "oa-chat-selection-chip-icon" });
     setIcon(iconEl, "quote-glyph");
-    this.selectionChipEl.createSpan({
-      cls: "oa-chat-selection-chip-text",
-      text: `Selection: ${state.context.selection.preview}`,
-    });
     this.selectionChipEl.setAttr(
       "title",
       `Cached selection ${state.context.selection.lineRange}\n\n${state.context.selection.fullText}`,
@@ -153,6 +237,14 @@ export class ChatStatusBar {
     this.ragClusterEl.toggleClass("oa-hidden", !state.rag.available);
     this.ragToggleEl.toggleClass("is-enabled", state.rag.enabled);
     this.ragToggleEl.toggleClass("is-disabled", !state.rag.enabled);
+    this.ragToggleEl.setAttr(
+      "title",
+      state.rag.enabled ? "Disable Vault RAG for this chat" : "Enable Vault RAG for this chat",
+    );
+    this.ragToggleEl.setAttr(
+      "aria-label",
+      state.rag.enabled ? "Disable Vault RAG" : "Enable Vault RAG",
+    );
   }
 
   private renderRAGIndicator(state: ChatStatusBarState): void {
@@ -195,10 +287,10 @@ export class ChatStatusBar {
       setIcon(iconEl, "library");
     }
 
-    const copyEl = this.ragIndicatorEl.createSpan({ cls: "oa-chat-rag-indicator-copy" });
-    copyEl.createSpan({ cls: "oa-chat-rag-indicator-label", text: "Vault RAG" });
-    copyEl.createSpan({ cls: "oa-chat-rag-indicator-detail", text: this.getRAGDetailText(state) });
-    this.ragIndicatorEl.setAttr("title", this.getRAGBadgeTitle(state));
+    if (state.rag.enabled && state.rag.previewPaths.length > 0) {
+      this.ragIndicatorEl.createSpan({ cls: "oa-chat-rag-indicator-count", text: `${state.rag.previewPaths.length}` });
+    }
+    this.ragIndicatorEl.setAttr("title", getRAGBadgeTitle(state));
   }
 
   private renderPDFChips(state: ChatStatusBarState): void {
@@ -223,10 +315,7 @@ export class ChatStatusBar {
 
     const iconEl = this.manualPDFChipEl.createSpan({ cls: "oa-chat-pdf-chip-icon" });
     setIcon(iconEl, "file-text");
-    const textEl = this.manualPDFChipEl.createSpan({ cls: "oa-chat-pdf-chip-text" });
-    textEl.createSpan({ cls: "oa-chat-pdf-chip-label", text: "PDF" });
-    textEl.createSpan({ cls: "oa-chat-pdf-chip-separator", text: "·" });
-    textEl.createSpan({ cls: "oa-chat-pdf-chip-name", text: filename });
+    this.manualPDFChipEl.setAttr("title", getManualPDFTitle(filename));
 
     const dismissBtn = this.manualPDFChipEl.createEl("button", {
       cls: "oa-chat-pdf-chip-dismiss",
@@ -235,8 +324,8 @@ export class ChatStatusBar {
     setIcon(dismissBtn, "x");
     dismissBtn.addEventListener("click", () => this.options.onRemovePDF());
 
-    if (this.options.preserveMarkdownContextOnPointerDown) {
-      this.options.preserveMarkdownContextOnPointerDown(dismissBtn);
+    if (this.options.captureMarkdownContextOnPointerDown) {
+      this.options.captureMarkdownContextOnPointerDown(dismissBtn);
     }
 
     this.manualPDFChipEl.show();
@@ -244,6 +333,7 @@ export class ChatStatusBar {
 
   private renderBibPDFChip(state: ChatStatusBarState["pdf"]["bib"]): void {
     this.bibPDFChipEl.empty();
+    delete this.bibPDFChipEl.dataset.pdfPath;
 
     if (!state) {
       this.bibPDFChipEl.hide();
@@ -262,57 +352,9 @@ export class ChatStatusBar {
     if (state.status === "preparing") {
       iconEl.addClass("is-spinning");
     }
-    const textEl = this.bibPDFChipEl.createSpan({ cls: "oa-chat-pdf-chip-text" });
-    textEl.createSpan({ cls: "oa-chat-pdf-chip-label", text: "Bib PDF" });
-    textEl.createSpan({ cls: "oa-chat-pdf-chip-separator", text: "·" });
-    textEl.createSpan({ cls: "oa-chat-pdf-chip-name", text: state.filename });
-    textEl.createSpan({ cls: "oa-chat-pdf-chip-separator", text: "·" });
-    textEl.createSpan({
-      cls: "oa-chat-pdf-chip-status",
-      text: state.status === "preparing" ? "Preparing" : state.status === "ready" ? "Ready" : "Error",
-    });
-    this.bibPDFChipEl.setAttr("title", state.title);
+    this.bibPDFChipEl.dataset.pdfPath = state.pdfPath;
+    this.bibPDFChipEl.setAttr("aria-label", `Open linked PDF ${state.filename}`);
+    this.bibPDFChipEl.setAttr("title", getBibPDFTitle(state));
     this.bibPDFChipEl.show();
-  }
-
-  private getRAGDetailText(state: ChatStatusBarState): string {
-    if (!state.rag.enabled) {
-      return "Off";
-    }
-
-    if (state.rag.previewPaths.length > 0) {
-      const count = state.rag.previewPaths.length;
-      return `${count} ${count === 1 ? "note" : "notes"} queued`;
-    }
-
-    if (state.rag.phase === "waiting") {
-      return "Waiting for typing to pause";
-    }
-
-    if (state.rag.phase === "computing") {
-      return "Scanning notes";
-    }
-
-    return "Ready";
-  }
-
-  private getRAGBadgeTitle(state: ChatStatusBarState): string {
-    if (!state.rag.enabled) {
-      return "Vault RAG is disabled for this chat.";
-    }
-
-    if (state.rag.previewPaths.length > 0) {
-      return `Draft preview would use:\n${state.rag.previewPaths.join("\n")}`;
-    }
-
-    if (state.rag.phase === "waiting") {
-      return "Draft preview will refresh after typing pauses.";
-    }
-
-    if (state.rag.phase === "computing") {
-      return "Computing draft preview now.";
-    }
-
-    return "Vault-wide retrieval is enabled for this chat. Pause typing to preview which notes would be used.";
   }
 }

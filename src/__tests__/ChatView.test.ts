@@ -38,6 +38,7 @@ describe("ChatView PDF context messages", () => {
       "Notes/Paper.md",
     )).toEqual({
       filename: "Paper.pdf",
+      pdfPath: "/tmp/Paper.pdf",
       status: "preparing",
       title: "Bib PDF OCR is running for the active note.",
     });
@@ -57,6 +58,7 @@ describe("ChatView PDF context messages", () => {
       "Notes/Paper.md",
     )).toEqual({
       filename: "Paper.pdf",
+      pdfPath: "/tmp/Paper.pdf",
       status: "ready",
       title: "Bib PDF OCR text is ready from cache.",
     });

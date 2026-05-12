@@ -314,11 +314,13 @@
 /* ===== Composer Status Bar ===== */
 .oa-chat-status-bar {
   display: flex;
-  align-items: flex-start;
-  gap: 10px 16px;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
   min-height: 0;
   padding: 2px 0 0;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .oa-chat-status-context,
@@ -326,43 +328,33 @@
 .oa-chat-status-attachment {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
+  flex: 0 0 auto;
 }
 
 .oa-chat-status-context {
-  flex: 1 1 320px;
-  flex-wrap: wrap;
-}
-
-.oa-chat-status-rag {
-  flex: 1 1 220px;
-  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .oa-chat-status-attachment {
-  flex: 0 1 min(100%, 260px);
   margin-left: auto;
-  justify-content: flex-start;
-  align-self: center;
 }
 
 .oa-chat-meta-toggle {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 24px;
-  padding: 0 9px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
   border: 1px solid transparent;
   border-radius: calc(var(--radius-s) + 1px);
   background: color-mix(in srgb, var(--background-secondary) 52%, transparent);
   color: var(--text-muted);
-  font-size: 0.76rem;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  white-space: nowrap;
   cursor: pointer;
   box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--background-modifier-border) 88%, transparent);
+  flex: 0 0 auto;
 }
 
 .oa-chat-meta-toggle:hover {
@@ -386,119 +378,89 @@
   box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--background-modifier-border) 70%, transparent);
 }
 
-.oa-chat-context-meta-group {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-  flex-wrap: wrap;
+.oa-chat-meta-toggle .svg-icon {
+  width: 13px;
+  height: 13px;
 }
 
 .oa-chat-context-meta {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  min-width: 0;
-  padding: 0;
-  font-size: 0.78rem;
+  justify-content: center;
+  position: relative;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--background-modifier-border) 72%, transparent);
   color: var(--text-muted);
-  line-height: 1.2;
+  flex: 0 0 auto;
 }
 
 .oa-chat-context-meta-icon .svg-icon {
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
 }
 
-.oa-chat-context-meta-text {
-  display: inline-flex;
-  align-items: center;
-  min-width: 0;
-}
-
-.oa-chat-pdf-chip-label,
-.oa-chat-rag-indicator-label {
-  font-weight: 600;
-  color: var(--text-faint);
-}
-
-.oa-chat-pdf-chip-separator {
-  color: var(--text-faint);
-}
-
-.oa-chat-context-meta-file {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-normal);
+.oa-chat-context-meta-marker {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--text-normal);
+  transform: translate(5px, 5px);
 }
 
 .oa-chat-selection-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  min-width: 0;
-  max-width: min(100%, 420px);
-  font-size: 0.8rem;
-  color: var(--text-normal);
-  padding: 2px 8px 2px 6px;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
   background: color-mix(in srgb, var(--interactive-accent) 7%, var(--background-primary));
   border: 1px solid color-mix(in srgb, var(--interactive-accent) 18%, var(--background-modifier-border));
-  border-radius: 999px;
-}
-
-.oa-chat-selection-chip-icon .svg-icon {
-  width: 12px;
-  height: 12px;
-  color: var(--interactive-accent);
+  border-radius: 50%;
   flex: 0 0 auto;
 }
 
-.oa-chat-selection-chip-text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.oa-chat-selection-chip-icon .svg-icon {
+  width: 10px;
+  height: 10px;
+  color: var(--interactive-accent);
 }
 
 .oa-chat-rag-indicator {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  min-width: 0;
-  padding: 0;
-  font-size: 0.78rem;
+  justify-content: center;
+  gap: 4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 999px;
   color: var(--text-muted);
-  line-height: 1.2;
+  background: color-mix(in srgb, var(--background-modifier-border) 72%, transparent);
+  flex: 0 0 auto;
 }
 
 .oa-chat-rag-indicator-signal {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   flex: 0 0 auto;
 }
 
-.oa-chat-rag-indicator-copy {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
-}
-
-.oa-chat-rag-indicator-detail {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.oa-chat-rag-indicator-count {
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text-normal);
 }
 
 .oa-chat-rag-indicator-icon .svg-icon {
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
 }
 
 .oa-chat-rag-indicator.is-idle .oa-chat-rag-indicator-icon,
@@ -506,28 +468,20 @@
   color: var(--color-green, #2e8b57);
 }
 
-.oa-chat-rag-indicator.is-idle .oa-chat-rag-indicator-detail {
-  color: var(--text-muted);
-}
-
 .oa-chat-rag-indicator.is-disabled .oa-chat-rag-indicator-icon .svg-icon {
   color: var(--text-faint);
 }
 
-.oa-chat-rag-indicator.is-active .oa-chat-rag-indicator-detail,
-.oa-chat-rag-indicator.is-waiting .oa-chat-rag-indicator-detail,
-.oa-chat-rag-indicator.is-computing .oa-chat-rag-indicator-detail {
+.oa-chat-rag-indicator.is-active,
+.oa-chat-rag-indicator.is-waiting,
+.oa-chat-rag-indicator.is-computing {
   color: var(--text-normal);
-}
-
-.oa-chat-rag-indicator.is-disabled .oa-chat-rag-indicator-detail {
-  color: var(--text-faint);
 }
 
 .oa-chat-rag-progress-ring {
   position: relative;
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
   flex: 0 0 auto;
   border: 2px solid color-mix(in srgb, var(--color-green, #2e8b57) 20%, transparent);
@@ -545,7 +499,7 @@
 .oa-chat-rag-progress-ring.is-filling::after {
   content: "";
   position: absolute;
-  inset: 2px;
+  inset: 1.5px;
   border-radius: 50%;
   background: color-mix(in srgb, var(--color-green, #2e8b57) 12%, var(--background-secondary));
 }
@@ -556,6 +510,70 @@
 
 .oa-rag-status {
   font-variant-numeric: tabular-nums;
+}
+
+.oa-chat-pdf-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--background-modifier-border) 72%, transparent);
+  color: var(--text-muted);
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.oa-chat-pdf-chip-button {
+  border: none;
+  cursor: pointer;
+}
+
+.oa-chat-pdf-chip-button:hover {
+  background: color-mix(in srgb, var(--background-modifier-hover) 72%, transparent);
+  color: var(--text-normal);
+}
+
+.oa-chat-pdf-chip-button:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--interactive-accent) 45%, transparent);
+  outline-offset: 1px;
+}
+
+.oa-chat-pdf-chip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.oa-chat-pdf-chip-icon .svg-icon,
+.oa-chat-pdf-chip-dismiss .svg-icon {
+  width: 10px;
+  height: 10px;
+}
+
+.oa-chat-pdf-chip-dismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.oa-chat-pdf-chip-dismiss:hover {
+  background: color-mix(in srgb, var(--background-modifier-hover) 70%, transparent);
+  color: var(--text-normal);
+}
+
+.oa-chat-pdf-chip-dismiss:active {
+  transform: scale(0.96);
 }
 
 @keyframes oa-rag-progress-spin {
@@ -651,23 +669,7 @@
   }
 
   .oa-chat-status-bar {
-    gap: 8px;
-  }
-
-  .oa-chat-status-rag,
-  .oa-chat-status-attachment {
-    flex-basis: 100%;
-    justify-content: flex-start;
-  }
-
-  .oa-chat-status-rag {
-    order: 2;
-  }
-
-  .oa-chat-status-attachment {
-    order: 3;
-    margin-left: 0;
-    justify-content: flex-start;
+    gap: 6px;
   }
 
   .oa-chat-composer-inner {
@@ -1335,61 +1337,8 @@
 }
 
 /* ===== PDF Composer Chip ===== */
-.oa-chat-pdf-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  max-width: min(100%, 260px);
-  padding: 3px 6px 3px 5px;
-  font-size: 0.78rem;
-  color: var(--text-normal);
-  background: color-mix(in srgb, var(--background-secondary) 80%, var(--background-primary));
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 999px;
-}
-
-.oa-chat-pdf-chip-icon .svg-icon {
-  width: 12px;
-  height: 12px;
-  color: var(--text-muted);
-}
-
 .oa-chat-pdf-chip-icon.is-spinning .svg-icon {
   animation: oa-rag-progress-spin 0.8s linear infinite;
-}
-
-.oa-chat-pdf-chip-text {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
-}
-
-.oa-chat-pdf-chip-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.oa-chat-pdf-chip-dismiss {
-  width: 16px;
-  height: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-s);
-  color: var(--text-faint);
-  cursor: pointer;
-}
-
-.oa-chat-pdf-chip-dismiss:hover {
-  color: var(--text-normal);
-  background: var(--background-modifier-hover);
 }
 
 /* ===== PDF Upload Button ===== */
