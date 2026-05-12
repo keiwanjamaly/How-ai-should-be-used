@@ -27,6 +27,8 @@ export interface ChatStatusBarState {
       filename: string;
       pdfPath: string;
       status: "preparing" | "ready" | "error";
+      includedInContext: boolean;
+      contextLabel: string;
       title: string;
     } | null;
   };
@@ -108,7 +110,17 @@ export function getManualPDFTitle(filename: string): string {
 }
 
 export function getBibPDFTitle(state: NonNullable<ChatStatusBarState["pdf"]["bib"]>): string {
-  return `${state.title}\n\nFile: ${state.filename}\nClick to open in your default PDF viewer.`;
+  return `${state.title}\n\nContext: ${state.contextLabel}\nFile: ${state.filename}\nClick to open in your default PDF viewer.`;
+}
+
+function getBibPDFStatusText(state: NonNullable<ChatStatusBarState["pdf"]["bib"]>): string {
+  if (state.status === "preparing") {
+    return "OCR running";
+  }
+  if (state.status === "ready") {
+    return "Ready";
+  }
+  return "Error";
 }
 
 export class ChatStatusBar {
@@ -315,6 +327,10 @@ export class ChatStatusBar {
 
     const iconEl = this.manualPDFChipEl.createSpan({ cls: "oa-chat-pdf-chip-icon" });
     setIcon(iconEl, "file-text");
+    this.manualPDFChipEl.createSpan({
+      cls: "oa-chat-pdf-chip-label",
+      text: filename,
+    });
     this.manualPDFChipEl.setAttr("title", getManualPDFTitle(filename));
 
     const dismissBtn = this.manualPDFChipEl.createEl("button", {
@@ -352,6 +368,20 @@ export class ChatStatusBar {
     if (state.status === "preparing") {
       iconEl.addClass("is-spinning");
     }
+    this.bibPDFChipEl.createSpan({
+      cls: "oa-chat-pdf-chip-kind",
+      text: "Bib PDF",
+    });
+    this.bibPDFChipEl.createSpan({
+      cls: "oa-chat-pdf-chip-status",
+      text: getBibPDFStatusText(state),
+    });
+    this.bibPDFChipEl.createSpan({
+      cls: "oa-chat-pdf-chip-meta",
+      text: state.contextLabel,
+    });
+    this.bibPDFChipEl.toggleClass("is-in-context", state.includedInContext);
+    this.bibPDFChipEl.toggleClass("is-out-of-context", !state.includedInContext);
     this.bibPDFChipEl.dataset.pdfPath = state.pdfPath;
     this.bibPDFChipEl.setAttr("aria-label", `Open linked PDF ${state.filename}`);
     this.bibPDFChipEl.setAttr("title", getBibPDFTitle(state));

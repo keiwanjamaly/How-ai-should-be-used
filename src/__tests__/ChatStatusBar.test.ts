@@ -90,7 +90,9 @@ describe("ChatStatusBar helpers", () => {
       filename: "paper.pdf",
       pdfPath: "/tmp/paper.pdf",
       status: "ready",
-      title: "Bib PDF OCR text is ready from cache.",
-    })).toBe("Bib PDF OCR text is ready from cache.\n\nFile: paper.pdf\nClick to open in your default PDF viewer.");
+      includedInContext: true,
+      contextLabel: "In chat",
+      title: "Bib PDF OCR text is ready from cache and included in this chat context.",
+    })).toBe("Bib PDF OCR text is ready from cache and included in this chat context.\n\nContext: In chat\nFile: paper.pdf\nClick to open in your default PDF viewer.");
   });
 });

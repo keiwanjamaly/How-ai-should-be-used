@@ -40,11 +40,13 @@ describe("ChatView PDF context messages", () => {
       filename: "Paper.pdf",
       pdfPath: "/tmp/Paper.pdf",
       status: "preparing",
-      title: "Bib PDF OCR is running for the active note.",
+      includedInContext: true,
+      contextLabel: "In chat",
+      title: "Bib PDF OCR is running and will be included in this chat context.",
     });
   });
 
-  it("builds a ready bib chip state and hides it when no matching note is active", () => {
+  it("builds a ready bib chip state and marks when it is out of chat context", () => {
     expect(buildBibPDFChipState(
       {
         notePath: "Notes/Paper.md",
@@ -60,7 +62,9 @@ describe("ChatView PDF context messages", () => {
       filename: "Paper.pdf",
       pdfPath: "/tmp/Paper.pdf",
       status: "ready",
-      title: "Bib PDF OCR text is ready from cache.",
+      includedInContext: true,
+      contextLabel: "In chat",
+      title: "Bib PDF OCR text is ready from cache and included in this chat context.",
     });
 
     expect(buildBibPDFChipState(
@@ -74,6 +78,13 @@ describe("ChatView PDF context messages", () => {
       },
       true,
       "Notes/Other.md",
-    )).toBeNull();
+    )).toEqual({
+      filename: "Paper.pdf",
+      pdfPath: "/tmp/Paper.pdf",
+      status: "ready",
+      includedInContext: false,
+      contextLabel: "Not in chat",
+      title: "Bib PDF OCR text is ready from cache, but not included in this chat context.",
+    });
   });
 });

@@ -1,42 +1,28 @@
-import { ItemView, MarkdownRenderer, Notice, WorkspaceLeaf, TFile, setIcon } from "obsidian";
+import { ItemView, Notice, WorkspaceLeaf, TFile, setIcon } from "obsidian";
 import type ObsidianAIChatPlugin from "../main";
 import { ChatStatusBar, type ChatStatusBarState, type ChatStatusBarRAGPhase } from "../components/ChatStatusBar";
 import type { LLMStrategy } from "../strategies/LLMStrategy";
-import { ChatRole, type ChatMessage, type ChatSession } from "../types";
+import { ChatRole, type ChatMessage } from "../types";
 import type { ActiveNoteEditProposal, ToolExecutionEvent } from "../types/tools";
 import { formatErrorMessage } from "../utils/errorUtils";
 import { getUniqueChunkPaths } from "../utils/ragPreview";
-import type { VaultChunk } from "../services/VaultRAGService";
 import {
   createIdleBibPDFPreparationState,
-  getReadyBibPDFContext,
   type BibPDFPreparationState,
 } from "../services/BibPDFPreparationService";
+import { ChatRequestBuilder } from "./chat/ChatRequestBuilder";
+import {
+  DraftRAGPreviewController,
+  type DraftRAGPreviewState,
+} from "./chat/DraftRAGPreviewController";
+import { ChatSessionController } from "./chat/ChatSessionController";
+import { ChatTranscriptRenderer } from "./chat/ChatTranscriptRenderer";
 
 export const CHAT_VIEW_TYPE = "obsidian-ai-chat-view";
 const DRAFT_RAG_PREVIEW_IDLE_MS = 5000;
 const DRAFT_RAG_PREVIEW_TICK_MS = 50;
 
-export function buildPDFContextMessage(filename: string, text: string): ChatMessage {
-  return {
-    role: ChatRole.System,
-    content: `Extracted PDF content from "${filename}":\n---\n${text}\n---`,
-  };
-}
-
-export function buildPDFContextMessages(
-  manualPDF: { filename: string; text: string } | null,
-  bibPDF: { filename: string; text: string } | null,
-): ChatMessage[] {
-  const messages: ChatMessage[] = [];
-  if (manualPDF) {
-    messages.push(buildPDFContextMessage(manualPDF.filename, manualPDF.text));
-  }
-  if (bibPDF) {
-    messages.push(buildPDFContextMessage(bibPDF.filename, bibPDF.text));
-  }
-  return messages;
-}
+export { buildPDFContextMessage, buildPDFContextMessages } from "./chat/ChatRequestBuilder";
 
 export function buildBibPDFChipState(
   state: BibPDFPreparationState,
@@ -44,21 +30,26 @@ export function buildBibPDFChipState(
   activeNotePath: string | null,
 ): ChatStatusBarState["pdf"]["bib"] {
   if (
-    !includeFileContext
-    || !state.filename
+    !state.filename
     || !state.pdfPath
     || state.status === "idle"
-    || state.notePath !== activeNotePath
   ) {
     return null;
   }
+
+  const includedInContext = includeFileContext && state.notePath === activeNotePath;
+  const contextLabel = includedInContext ? "In chat" : "Not in chat";
 
   if (state.status === "preparing") {
     return {
       filename: state.filename,
       pdfPath: state.pdfPath,
       status: "preparing",
-      title: "Bib PDF OCR is running for the active note.",
+      includedInContext,
+      contextLabel,
+      title: includedInContext
+        ? "Bib PDF OCR is running and will be included in this chat context."
+        : "Bib PDF OCR is running, but the linked PDF is not currently in this chat context.",
     };
   }
 
@@ -67,9 +58,15 @@ export function buildBibPDFChipState(
       filename: state.filename,
       pdfPath: state.pdfPath,
       status: "ready",
-      title: state.source === "cache"
-        ? "Bib PDF OCR text is ready from cache."
-        : "Bib PDF OCR text is ready.",
+      includedInContext,
+      contextLabel,
+      title: includedInContext
+        ? state.source === "cache"
+          ? "Bib PDF OCR text is ready from cache and included in this chat context."
+          : "Bib PDF OCR text is ready and included in this chat context."
+        : state.source === "cache"
+          ? "Bib PDF OCR text is ready from cache, but not included in this chat context."
+          : "Bib PDF OCR text is ready, but not included in this chat context.",
     };
   }
 
@@ -77,6 +74,8 @@ export function buildBibPDFChipState(
     filename: state.filename,
     pdfPath: state.pdfPath,
     status: "error",
+    includedInContext: false,
+    contextLabel,
     title: state.errorMessage
       ? `Bib PDF OCR failed: ${state.errorMessage}`
       : "Bib PDF OCR failed.",
@@ -102,22 +101,45 @@ export class ChatView extends ItemView {
   private includeFileContext = true;
   private selectedModel: string = "";
   private modelSelectorEl!: HTMLSelectElement;
-  private messageWrappers = new Map<ChatMessage, HTMLDivElement>();
-  private messageCleanupMap = new Map<ChatMessage, () => void>();
-  private messageRenderState = new WeakMap<HTMLDivElement, { rendering: boolean; pending: boolean; message: ChatMessage }>();
   private ragEnabled = true;
-  private previewRetrievedChunks: VaultChunk[] = [];
-  private draftRAGPreviewTimer: number | null = null;
-  private draftRAGPreviewTickTimer: number | null = null;
-  private draftRAGPreviewRequestId = 0;
-  private draftRAGPreviewPhase: ChatStatusBarRAGPhase = "idle";
-  private draftRAGPreviewProgress = 0;
+  private draftRAGPreviewState: DraftRAGPreviewState = {
+    phase: "idle",
+    progress: 0,
+    chunks: [],
+  };
+  private readonly requestBuilder: ChatRequestBuilder;
+  private readonly draftRAGPreviewController: DraftRAGPreviewController;
+  private readonly sessionController: ChatSessionController;
+  private transcriptRenderer: ChatTranscriptRenderer | null = null;
 
   constructor(
     leaf: WorkspaceLeaf,
     private readonly plugin: ObsidianAIChatPlugin,
   ) {
     super(leaf);
+    this.requestBuilder = new ChatRequestBuilder({
+      getSystemPrompt: () => this.plugin.settings.systemPrompt,
+      getToolUseInstruction: () => this.plugin.internalToolService.getToolUseInstruction(),
+      getActiveFile: () => this.getActiveFile(),
+      getActiveSelectionContext: () => this.plugin.internalToolService.getActiveSelectionContext(),
+      readFile: async (file) => this.app.vault.cachedRead(file),
+      retrieveRelevantChunks: (query, activeFilePath) => this.plugin.vaultRAGService.retrieveRelevantChunks(query, activeFilePath),
+    });
+    this.draftRAGPreviewController = new DraftRAGPreviewController({
+      idleMs: DRAFT_RAG_PREVIEW_IDLE_MS,
+      tickMs: DRAFT_RAG_PREVIEW_TICK_MS,
+      retrieveRelevantChunks: (query, activeFilePath) => this.plugin.vaultRAGService.retrieveRelevantChunks(query, activeFilePath),
+      getActiveFilePath: () => this.getActiveFile()?.path,
+      getCurrentDraft: () => this.inputEl?.value ?? "",
+      onStateChange: (state) => {
+        this.draftRAGPreviewState = state;
+        this.renderStatusBar();
+      },
+    });
+    this.sessionController = new ChatSessionController({
+      getSettings: () => this.plugin.settings,
+      saveSettings: () => this.plugin.saveSettings(),
+    });
   }
 
   getViewType(): string {
@@ -178,6 +200,20 @@ export class ChatView extends ItemView {
     this.newChatButtonEl.addEventListener("click", () => this.startNewChat());
 
     this.messagesEl = root.createDiv({ cls: "oa-chat-messages" });
+    this.transcriptRenderer = new ChatTranscriptRenderer({
+      app: this.app,
+      component: this,
+      messagesEl: this.messagesEl,
+      getActiveFilePath: () => this.getActiveFile()?.path ?? "",
+      onEditMessage: (wrapper, contentEl, message) => {
+        if (!this.busy) {
+          this.enterEditMode(wrapper, contentEl, message);
+        }
+      },
+      onReviewProposal: (proposal) => {
+        void this.showDiffForProposal(proposal);
+      },
+    });
 
     const composer = root.createDiv({ cls: "oa-chat-composer" });
 
@@ -228,7 +264,9 @@ export class ChatView extends ItemView {
       cls: "oa-chat-pdf-upload",
       attr: { title: "Upload PDF for context", "aria-label": "Upload PDF" },
     });
-    setIcon(this.pdfUploadBtnEl, "file-up");
+    const pdfUploadIcon = this.pdfUploadBtnEl.createSpan({ cls: "oa-chat-pdf-upload-icon" });
+    setIcon(pdfUploadIcon, "file-up");
+    this.pdfUploadBtnEl.createSpan({ cls: "oa-chat-pdf-upload-label", text: "PDF" });
     this.preserveMarkdownContextOnPointerDown(this.pdfUploadBtnEl);
     this.pdfUploadBtnEl.addEventListener("click", () => {
       this.pdfFileInputEl.click();
@@ -284,7 +322,7 @@ export class ChatView extends ItemView {
   async onClose(): Promise<void> {
     this.saveCurrentSession();
     this.stopGeneration();
-    this.clearDraftRAGPreview();
+    this.draftRAGPreviewController.clear();
     this.runMessageCleanups();
     this.containerEl.empty();
   }
@@ -322,9 +360,10 @@ export class ChatView extends ItemView {
     }
 
     if (!this.plugin.settings.vaultRAG.enabled || !this.ragEnabled) {
-      this.resetDraftRAGPreviewState();
+      this.draftRAGPreviewController.clear();
     }
 
+    this.draftRAGPreviewController.setAvailability(this.plugin.settings.vaultRAG.enabled, this.ragEnabled);
     this.renderStatusBar();
   }
 
@@ -407,9 +446,9 @@ export class ChatView extends ItemView {
       rag: {
         available: this.plugin.settings.vaultRAG.enabled,
         enabled: this.ragEnabled,
-        phase: this.draftRAGPreviewPhase,
-        progress: this.draftRAGPreviewProgress,
-        previewPaths: getUniqueChunkPaths(this.previewRetrievedChunks),
+        phase: this.draftRAGPreviewState.phase as ChatStatusBarRAGPhase,
+        progress: this.draftRAGPreviewState.progress,
+        previewPaths: getUniqueChunkPaths(this.draftRAGPreviewState.chunks),
       },
       pdf: {
         manualFilename: this.manualPDFContext?.filename ?? null,
@@ -423,190 +462,12 @@ export class ChatView extends ItemView {
   }
 
   private scheduleDraftRAGPreview(): void {
-    if (this.draftRAGPreviewTimer !== null) {
-      window.clearTimeout(this.draftRAGPreviewTimer);
-      this.draftRAGPreviewTimer = null;
-    }
-
-    const draft = this.inputEl.value.trim();
-    if (!this.shouldPreviewDraftRAG(draft)) {
-      this.clearDraftRAGPreview();
-      return;
-    }
-
-    this.startDraftRAGPreviewWaitingState();
-    this.draftRAGPreviewTimer = window.setTimeout(() => {
-      this.draftRAGPreviewTimer = null;
-      void this.refreshDraftRAGPreview(draft);
-    }, DRAFT_RAG_PREVIEW_IDLE_MS);
-  }
-
-  private shouldPreviewDraftRAG(draft: string): boolean {
-    return this.plugin.settings.vaultRAG.enabled
-      && this.ragEnabled
-      && !this.busy
-      && draft.length > 0;
+    this.draftRAGPreviewController.setAvailability(this.plugin.settings.vaultRAG.enabled, this.ragEnabled);
+    this.draftRAGPreviewController.schedule(this.inputEl.value.trim());
   }
 
   private clearDraftRAGPreview(): void {
-    if (this.draftRAGPreviewTimer !== null) {
-      window.clearTimeout(this.draftRAGPreviewTimer);
-      this.draftRAGPreviewTimer = null;
-    }
-
-    this.resetDraftRAGPreviewState();
-    this.renderStatusBar();
-  }
-
-  private resetDraftRAGPreviewState(): void {
-    this.stopDraftRAGPreviewTicking();
-    this.draftRAGPreviewRequestId += 1;
-    this.draftRAGPreviewPhase = "idle";
-    this.draftRAGPreviewProgress = 0;
-    this.previewRetrievedChunks = [];
-  }
-
-  private async refreshDraftRAGPreview(draft: string): Promise<void> {
-    if (!this.shouldPreviewDraftRAG(draft)) {
-      this.clearDraftRAGPreview();
-      return;
-    }
-
-    const requestId = ++this.draftRAGPreviewRequestId;
-    this.stopDraftRAGPreviewTicking();
-    this.draftRAGPreviewPhase = "computing";
-    this.draftRAGPreviewProgress = 1;
-    this.renderStatusBar();
-
-    try {
-      const chunks = await this.plugin.vaultRAGService.retrieveRelevantChunks(
-        draft,
-        this.getActiveFile()?.path,
-      );
-
-      if (requestId !== this.draftRAGPreviewRequestId) {
-        return;
-      }
-
-      const currentDraft = this.inputEl.value.trim();
-      if (!this.shouldPreviewDraftRAG(currentDraft) || currentDraft !== draft) {
-        return;
-      }
-
-      this.draftRAGPreviewPhase = "idle";
-      this.draftRAGPreviewProgress = 0;
-      this.previewRetrievedChunks = chunks;
-      this.renderStatusBar();
-    } catch (error) {
-      if (requestId !== this.draftRAGPreviewRequestId) {
-        return;
-      }
-
-      console.error("Failed to refresh draft RAG preview:", error);
-      this.draftRAGPreviewPhase = "idle";
-      this.draftRAGPreviewProgress = 0;
-      this.previewRetrievedChunks = [];
-      this.renderStatusBar();
-    }
-  }
-
-  private startDraftRAGPreviewWaitingState(): void {
-    this.stopDraftRAGPreviewTicking();
-    this.draftRAGPreviewPhase = "waiting";
-    this.draftRAGPreviewProgress = 0;
-    this.previewRetrievedChunks = [];
-    this.renderStatusBar();
-    this.draftRAGPreviewTickTimer = window.setInterval(() => {
-      if (this.draftRAGPreviewPhase !== "waiting") {
-        this.stopDraftRAGPreviewTicking();
-        return;
-      }
-
-      this.draftRAGPreviewProgress = Math.min(
-        this.draftRAGPreviewProgress + (DRAFT_RAG_PREVIEW_TICK_MS / DRAFT_RAG_PREVIEW_IDLE_MS),
-        1,
-      );
-      this.renderStatusBar();
-
-      if (this.draftRAGPreviewProgress >= 1) {
-        this.stopDraftRAGPreviewTicking();
-      }
-    }, DRAFT_RAG_PREVIEW_TICK_MS);
-  }
-
-  private stopDraftRAGPreviewTicking(): void {
-    if (this.draftRAGPreviewTickTimer !== null) {
-      window.clearInterval(this.draftRAGPreviewTickTimer);
-      this.draftRAGPreviewTickTimer = null;
-    }
-  }
-
-  private async buildFileContextMessage(): Promise<ChatMessage | null> {
-    if (!this.includeFileContext) {
-      return null;
-    }
-
-    const file = this.getActiveFile();
-    if (!file) {
-      return null;
-    }
-
-    try {
-      const content = await this.app.vault.cachedRead(file);
-      const selection = this.plugin.internalToolService.getActiveSelectionContext();
-      const selectionContext = selection
-        ? [
-          "",
-          `The user currently has this text selected (${selection.from.line + 1}:${selection.from.ch} to ${selection.to.line + 1}:${selection.to.ch}):`,
-          "---",
-          selection.selectedText,
-          "---",
-          "If the user asks to replace only that part, prefer a selection replacement instead of rewriting the whole note.",
-        ].join("\n")
-        : "";
-      const contextContent = `The user has the following note open ("${file.name}"):\n---\n${content}\n---\nRefer to this note when answering the user's questions.${selectionContext}`;
-
-      return {
-        role: ChatRole.System,
-        content: contextContent,
-      };
-    } catch (error) {
-      console.error("Failed to read active file:", error);
-      return null;
-    }
-  }
-
-  private async buildVaultContextMessage(query: string): Promise<ChatMessage | null> {
-    if (!this.plugin.settings.vaultRAG.enabled || !this.ragEnabled) {
-      return null;
-    }
-
-    const chunks = await this.plugin.vaultRAGService.retrieveRelevantChunks(
-      query,
-      this.getActiveFile()?.path,
-    );
-
-    if (chunks.length === 0) {
-      return null;
-    }
-
-    const formattedChunks = chunks.map((chunk, index) => [
-      `Snippet ${index + 1}`,
-      `Path: ${chunk.path}`,
-      `Title: ${chunk.title}`,
-      chunk.content,
-    ].join("\n")).join("\n\n---\n\n");
-
-    return {
-      role: ChatRole.System,
-      content: [
-        "Use the following retrieved vault snippets as optional grounding context.",
-        "Prefer them when they are relevant, and cite note paths naturally when you rely on them.",
-        "---",
-        formattedChunks,
-        "---",
-      ].join("\n"),
-    };
+    this.draftRAGPreviewController.clear();
   }
 
   private updateBusyState(isBusy: boolean): void {
@@ -617,9 +478,8 @@ export class ChatView extends ItemView {
     this.newChatButtonEl.disabled = isBusy;
     this.modelSelectorEl.disabled = isBusy;
     this.pdfUploadBtnEl.disabled = isBusy;
-    this.messagesEl.querySelectorAll<HTMLButtonElement>(".oa-chat-edit-btn").forEach(btn => {
-      btn.disabled = isBusy;
-    });
+    this.transcriptRenderer?.setBusy(isBusy);
+    this.draftRAGPreviewController.setBusy(isBusy);
 
     if (isBusy) {
       this.clearDraftRAGPreview();
@@ -629,75 +489,39 @@ export class ChatView extends ItemView {
   }
 
   private runMessageCleanups(): void {
-    this.messageCleanupMap.forEach((cleanup) => cleanup());
-    this.messageCleanupMap.clear();
-    this.messageWrappers.clear();
-  }
-
-  private generateSessionTitle(messages: ChatMessage[]): string {
-    const firstUser = messages.find(m => m.role === ChatRole.User);
-    if (!firstUser) return "New chat";
-    const text = firstUser.content.trim().replace(/\n/g, " ");
-    return text.length > 40 ? text.slice(0, 40) + "…" : text;
+    this.transcriptRenderer?.runMessageCleanups();
   }
 
   private clearMessages(): void {
     this.messages = [];
-    this.messagesEl.empty();
-    this.runMessageCleanups();
+    this.transcriptRenderer?.clear();
   }
 
   private saveCurrentSession(): void {
-    const toSave = this.messages.filter(m => m.role !== ChatRole.System);
-    if (toSave.length === 0) return;
-
-    const { chatSessions } = this.plugin.settings;
-    const title = this.generateSessionTitle(toSave);
-    const existing = this.currentSessionId
-      ? chatSessions.find(s => s.id === this.currentSessionId)
-      : null;
-
-    if (existing) {
-      existing.messages = toSave;
-      existing.title = title;
-    } else {
-      const session: ChatSession = {
-        id: crypto.randomUUID(),
-        title,
-        messages: toSave,
-        createdAt: Date.now(),
-      };
-      chatSessions.unshift(session);
-      this.currentSessionId = session.id;
-    }
-
-    if (chatSessions.length > 50) {
-      chatSessions.splice(50);
-    }
-
-    this.plugin.settings.activeSessionId = this.currentSessionId;
-    void this.plugin.saveSettings();
+    void this.sessionController.save(this.messages, this.currentSessionId).then((id) => {
+      this.currentSessionId = id;
+    });
   }
 
   private loadSession(id: string): void {
     this.saveCurrentSession();
+    void this.sessionController.load(id).then((session) => {
+      if (!session) {
+        return;
+      }
 
-    const session = this.plugin.settings.chatSessions.find(s => s.id === id);
-    if (!session) return;
+      this.clearMessages();
+      this.inputEl.value = "";
+      this.clearDraftRAGPreview();
+      this.messages = [...session.messages];
+      this.currentSessionId = id;
 
-    this.clearMessages();
-    this.inputEl.value = "";
-    this.clearDraftRAGPreview();
-    this.messages = [...session.messages];
-    this.currentSessionId = id;
-    this.plugin.settings.activeSessionId = id;
-    void this.plugin.saveSettings();
+      for (const msg of this.messages) {
+        this.appendMessage(msg);
+      }
 
-    for (const msg of this.messages) {
-      this.appendMessage(msg);
-    }
-
-    this.refreshSessionSelector();
+      this.refreshSessionSelector();
+    });
   }
 
   private startNewChat(): void {
@@ -708,21 +532,17 @@ export class ChatView extends ItemView {
     this.inputEl.value = "";
     this.clearDraftRAGPreview();
     this.currentSessionId = null;
-    this.plugin.settings.activeSessionId = null;
-    void this.plugin.saveSettings();
+    void this.sessionController.clearActiveSession();
     this.refreshSessionSelector();
   }
 
   private restoreLastSession(): void {
-    const { activeSessionId, chatSessions } = this.plugin.settings;
-    if (activeSessionId) {
-      const session = chatSessions.find(s => s.id === activeSessionId);
-      if (session) {
-        this.messages = [...session.messages];
-        this.currentSessionId = activeSessionId;
-        for (const msg of this.messages) {
-          this.appendMessage(msg);
-        }
+    const session = this.sessionController.restoreLast();
+    if (session) {
+      this.messages = [...session.messages];
+      this.currentSessionId = session.id;
+      for (const msg of this.messages) {
+        this.appendMessage(msg);
       }
     }
     this.refreshSessionSelector();
@@ -731,7 +551,7 @@ export class ChatView extends ItemView {
   private refreshSessionSelector(): void {
     this.sessionSelectorEl.empty();
 
-    const { chatSessions } = this.plugin.settings;
+    const chatSessions = this.sessionController.getSessions();
 
     if (chatSessions.length === 0) {
       const opt = this.sessionSelectorEl.createEl("option", {
@@ -773,202 +593,11 @@ export class ChatView extends ItemView {
   }
 
   private appendMessage(message: ChatMessage): HTMLDivElement {
-    const wrapper = this.messagesEl.createDiv({ cls: "oa-chat-message" });
-    wrapper.toggleClass("oa-chat-user", message.role === ChatRole.User);
-    wrapper.toggleClass("oa-chat-assistant", message.role === ChatRole.Assistant);
-    wrapper.toggleClass("oa-chat-system", message.role === ChatRole.System);
-
-    this.messageWrappers.set(message, wrapper);
-
-    const content = wrapper.createDiv({
-      cls: "oa-chat-message-content",
-    });
-    this.renderMessageContent(content, message);
-
-    if (message.role !== ChatRole.System) {
-      const toolbar = wrapper.createDiv({ cls: "oa-chat-message-toolbar" });
-
-      const copyBtn = toolbar.createEl("button", {
-        cls: "oa-chat-copy-btn",
-        attr: {
-          title: "Copy message",
-        },
-      });
-      setIcon(copyBtn, "copy");
-
-      const clickHandler = () => {
-        navigator.clipboard.writeText(message.content).then(() => {
-          setIcon(copyBtn, "check");
-          setTimeout(() => {
-            setIcon(copyBtn, "copy");
-          }, 2000);
-        });
-      };
-
-      copyBtn.addEventListener("click", clickHandler);
-      this.messageCleanupMap.set(message, () => {
-        copyBtn.removeEventListener("click", clickHandler);
-      });
-
-      if (message.role === ChatRole.User) {
-        const editBtn = toolbar.createEl("button", {
-          cls: "oa-chat-edit-btn",
-          attr: { title: "Edit message", "aria-label": "Edit message" },
-        });
-        setIcon(editBtn, "pencil");
-        const editHandler = () => {
-          if (!this.busy) this.enterEditMode(wrapper, content, message);
-        };
-        editBtn.addEventListener("click", editHandler);
-        const existingCleanup = this.messageCleanupMap.get(message);
-        this.messageCleanupMap.set(message, () => {
-          existingCleanup?.();
-          editBtn.removeEventListener("click", editHandler);
-        });
-      }
-    }
-
-    this.messagesEl.scrollTo({ top: this.messagesEl.scrollHeight });
-    return content;
+    return this.transcriptRenderer!.appendMessage(message, this.busy);
   }
 
   private renderMessageContent(contentEl: HTMLDivElement, message: ChatMessage): void {
-    const existing = this.messageRenderState.get(contentEl);
-    if (existing) {
-      existing.pending = true;
-      existing.message = message;
-      if (existing.rendering) {
-        return;
-      }
-    }
-
-    const state = existing ?? {
-      rendering: false,
-      pending: true,
-      message,
-    };
-
-    this.messageRenderState.set(contentEl, state);
-    state.pending = true;
-    state.message = message;
-
-    void this.processMessageRender(contentEl, state);
-  }
-
-  private async processMessageRender(
-    contentEl: HTMLDivElement,
-    state: { rendering: boolean; pending: boolean; message: ChatMessage },
-  ): Promise<void> {
-    if (state.rendering) {
-      return;
-    }
-
-    state.rendering = true;
-
-    try {
-      while (state.pending) {
-        state.pending = false;
-        const { message } = state;
-        const renderedContent = this.normalizeMathDelimiters(message.content);
-
-        contentEl.empty();
-
-        try {
-          await MarkdownRenderer.render(
-            this.app,
-            renderedContent,
-            contentEl,
-            this.getActiveFile()?.path ?? "",
-            this,
-          );
-        } catch (error) {
-          console.error("Failed to render chat message as markdown:", error);
-          contentEl.setText(message.content);
-        }
-
-        const toolEvents = message.toolEvents ?? message.mcpCalls;
-        if (toolEvents?.length) {
-          this.renderToolEvents(contentEl, toolEvents);
-        }
-
-        if (message.editProposal) {
-          this.renderProposalAction(contentEl, message.editProposal);
-        }
-      }
-    } finally {
-      state.rendering = false;
-      if (state.pending) {
-        void this.processMessageRender(contentEl, state);
-      }
-    }
-  }
-
-  private normalizeMathDelimiters(content: string): string {
-    return content
-      .replace(/\\\[([\s\S]*?)\\\]/g, (_match, math: string) => `$$\n${math.trim()}\n$$`)
-      .replace(/\\\(([^]+?)\\\)/g, (_match, math: string) => `$${math.trim()}$`);
-  }
-
-  private renderToolEvents(contentEl: HTMLDivElement, calls: ToolExecutionEvent[]): void {
-    const callsEl = contentEl.createDiv({ cls: "oa-chat-mcp-calls" });
-    if (calls.length > 1) {
-      const titleEl = callsEl.createDiv({ cls: "oa-chat-mcp-title" });
-      titleEl.setText(`${calls.length} tool calls`);
-    }
-
-    for (const call of calls) {
-      const callEl = callsEl.createEl("details", { cls: "oa-chat-mcp-call" });
-      callEl.toggleClass("oa-chat-mcp-call-success", call.success);
-      callEl.toggleClass("oa-chat-mcp-call-error", !call.success);
-
-      const summaryEl = callEl.createEl("summary", { cls: "oa-chat-mcp-summary" });
-      summaryEl.createSpan({
-        cls: "oa-chat-mcp-status",
-        text: call.success ? "Success" : "Error",
-      });
-      summaryEl.createSpan({
-        cls: "oa-chat-mcp-tool",
-        text: `${call.source === "internal" ? "internal" : call.serverName} -> ${call.toolName}`,
-      });
-      summaryEl.createSpan({
-        cls: "oa-chat-mcp-duration",
-        text: `${call.durationMs} ms`,
-      });
-
-      const detailsEl = callEl.createDiv({ cls: "oa-chat-mcp-details" });
-      this.createMCPDetailBlock(detailsEl, "Arguments", call.argumentsText);
-      if (call.success) {
-        this.createMCPDetailBlock(detailsEl, "Result", call.resultText ?? "");
-      } else {
-        this.createMCPDetailBlock(detailsEl, "Error", call.errorText ?? "");
-      }
-    }
-  }
-
-  private createMCPDetailBlock(parent: HTMLElement, label: string, text: string): void {
-    const blockEl = parent.createDiv({ cls: "oa-chat-mcp-detail-block" });
-    blockEl.createDiv({ cls: "oa-chat-mcp-detail-label", text: label });
-    blockEl.createEl("pre", { cls: "oa-chat-mcp-detail-text", text: text || "No data" });
-  }
-
-  private renderProposalAction(
-    contentEl: HTMLDivElement,
-    proposal: ActiveNoteEditProposal,
-  ): void {
-    const actionsEl = contentEl.createDiv({ cls: "oa-chat-message-actions" });
-    const applyBtn = actionsEl.createEl("button", {
-      cls: "mod-cta oa-chat-apply-btn",
-      attr: {
-        title: "Review changes in diff view and apply selectively",
-      },
-    });
-    const applyIcon = applyBtn.createSpan({ cls: "oa-chat-apply-btn-icon" });
-    setIcon(applyIcon, "file-diff");
-    applyBtn.createSpan({ text: "Review & Apply Changes" });
-
-    applyBtn.addEventListener("click", () => {
-      void this.showDiffForProposal(proposal);
-    });
+    this.transcriptRenderer?.renderMessageContent(contentEl, message);
   }
 
   private async showDiffForProposal(proposal: ActiveNoteEditProposal): Promise<void> {
@@ -979,44 +608,14 @@ export class ChatView extends ItemView {
    * Builds the request messages array for the LLM, prepending the system prompt and active file context if available.
    */
   private async buildRequestMessages(userQuery: string): Promise<ChatMessage[]> {
-    const requestMessages: ChatMessage[] = [];
-
-    const systemPrompt = this.plugin.settings.systemPrompt.trim();
-    if (systemPrompt) {
-      requestMessages.push({
-        role: ChatRole.System,
-        content: systemPrompt,
-      });
-    }
-
-    requestMessages.push({
-      role: ChatRole.System,
-      content: this.plugin.internalToolService.getToolUseInstruction(),
+    return this.requestBuilder.build({
+      userQuery,
+      includeFileContext: this.includeFileContext,
+      vaultRAGEnabled: this.plugin.settings.vaultRAG.enabled && this.ragEnabled,
+      messages: this.messages,
+      manualPDFContext: this.manualPDFContext,
+      bibPDFState: this.bibPDFState,
     });
-
-    const fileContext = await this.buildFileContextMessage();
-    if (fileContext) {
-      requestMessages.push(fileContext);
-    }
-
-    const vaultContext = await this.buildVaultContextMessage(userQuery);
-    if (vaultContext) {
-      requestMessages.push(vaultContext);
-    }
-
-    requestMessages.push(...buildPDFContextMessages(
-      this.manualPDFContext,
-      getReadyBibPDFContext(
-        this.bibPDFState,
-        this.includeFileContext ? this.getActiveFile()?.path ?? null : null,
-      ),
-    ));
-
-    requestMessages.push(
-      ...this.messages.filter((message) => message.content?.trim()),
-    );
-
-    return requestMessages;
   }
 
   /**
@@ -1219,15 +818,7 @@ export class ChatView extends ItemView {
 
     const removedMessages = this.messages.splice(idx);
 
-    for (const removed of removedMessages) {
-      const el = this.messageWrappers.get(removed);
-      if (el) {
-        this.messageCleanupMap.get(removed)?.();
-        this.messageCleanupMap.delete(removed);
-        this.messageWrappers.delete(removed);
-        el.remove();
-      }
-    }
+    this.transcriptRenderer?.removeMessages(removedMessages);
 
     // editArea is a child of wrapper, already removed above; this is a safety net
     editArea.remove();

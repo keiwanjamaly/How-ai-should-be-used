@@ -517,12 +517,13 @@
   align-items: center;
   justify-content: center;
   min-width: 18px;
-  height: 18px;
-  padding: 0 4px;
+  max-width: 220px;
+  min-height: 22px;
+  padding: 2px 8px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--background-modifier-border) 72%, transparent);
   color: var(--text-muted);
-  gap: 4px;
+  gap: 6px;
   flex: 0 0 auto;
 }
 
@@ -545,6 +546,54 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+.oa-chat-pdf-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.68rem;
+  line-height: 1;
+}
+
+.oa-chat-pdf-chip-kind {
+  font-size: 0.66rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  color: var(--text-normal);
+}
+
+.oa-chat-pdf-chip-status {
+  font-size: 0.66rem;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.oa-chat-pdf-chip-meta {
+  font-size: 0.64rem;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.oa-chat-pdf-chip-button.is-in-context {
+  background: color-mix(in srgb, var(--color-green, #2e8b57) 10%, var(--background-modifier-border) 72%);
+  color: var(--text-normal);
+}
+
+.oa-chat-pdf-chip-button.is-in-context .oa-chat-pdf-chip-status,
+.oa-chat-pdf-chip-button.is-in-context .oa-chat-pdf-chip-meta {
+  color: var(--color-green, #2e8b57);
+}
+
+.oa-chat-pdf-chip-button.is-out-of-context .oa-chat-pdf-chip-status,
+.oa-chat-pdf-chip-button.is-out-of-context .oa-chat-pdf-chip-meta {
+  color: var(--color-orange, #c58a00);
 }
 
 .oa-chat-pdf-chip-icon .svg-icon,
@@ -1343,17 +1392,35 @@
 
 /* ===== PDF Upload Button ===== */
 .oa-chat-pdf-upload {
-  width: 28px;
+  width: auto;
   height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0;
+  gap: 6px;
+  padding: 0 8px;
   background: transparent;
   border: none;
   border-radius: var(--radius-s);
   color: var(--text-muted);
   cursor: pointer;
+}
+
+.oa-chat-pdf-upload-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.oa-chat-pdf-upload-icon .svg-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.oa-chat-pdf-upload-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 .oa-chat-pdf-upload:hover {
