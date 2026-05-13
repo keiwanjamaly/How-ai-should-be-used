@@ -1,4 +1,4 @@
-import { ItemView, Notice, WorkspaceLeaf, TFile, setIcon } from "obsidian";
+import { ItemView, MarkdownView, Notice, WorkspaceLeaf, TFile, setIcon } from "obsidian";
 import type ObsidianAIChatPlugin from "../main";
 import { ChatStatusBar, type ChatStatusBarState, type ChatStatusBarRAGPhase } from "../components/ChatStatusBar";
 import type { LLMStrategy } from "../strategies/LLMStrategy";
@@ -92,6 +92,9 @@ export class ChatView extends ItemView {
   private statusBar!: ChatStatusBar;
   private sessionSelectorEl!: HTMLSelectElement;
   private currentSessionId: string | null = null;
+  private chatContextNotePath: string | null = null;
+  private candidateNotePath: string | null = null;
+  private lastMarkdownLeaf: WorkspaceLeaf | null = null;
   private manualPDFContext: { filename: string; text: string } | null = null;
   private bibPDFState: BibPDFPreparationState = createIdleBibPDFPreparationState();
   private pdfUploadBtnEl!: HTMLButtonElement;
@@ -111,6 +114,8 @@ export class ChatView extends ItemView {
   private readonly draftRAGPreviewController: DraftRAGPreviewController;
   private readonly sessionController: ChatSessionController;
   private transcriptRenderer: ChatTranscriptRenderer | null = null;
+  private pendingSessionSaveTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
+  private saveSequence: Promise<void> = Promise.resolve();
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -120,7 +125,7 @@ export class ChatView extends ItemView {
     this.requestBuilder = new ChatRequestBuilder({
       getSystemPrompt: () => this.plugin.settings.systemPrompt,
       getToolUseInstruction: () => this.plugin.internalToolService.getToolUseInstruction(),
-      getActiveFile: () => this.getActiveFile(),
+      getActiveFile: () => this.getChatContextFile(),
       getActiveSelectionContext: () => this.plugin.internalToolService.getActiveSelectionContext(),
       readFile: async (file) => this.app.vault.cachedRead(file),
       retrieveRelevantChunks: (query, activeFilePath) => this.plugin.vaultRAGService.retrieveRelevantChunks(query, activeFilePath),
@@ -129,7 +134,7 @@ export class ChatView extends ItemView {
       idleMs: DRAFT_RAG_PREVIEW_IDLE_MS,
       tickMs: DRAFT_RAG_PREVIEW_TICK_MS,
       retrieveRelevantChunks: (query, activeFilePath) => this.plugin.vaultRAGService.retrieveRelevantChunks(query, activeFilePath),
-      getActiveFilePath: () => this.getActiveFile()?.path,
+      getActiveFilePath: () => this.getChatContextFile()?.path,
       getCurrentDraft: () => this.inputEl?.value ?? "",
       onStateChange: (state) => {
         this.draftRAGPreviewState = state;
@@ -140,6 +145,9 @@ export class ChatView extends ItemView {
       getSettings: () => this.plugin.settings,
       saveSettings: () => this.plugin.saveSettings(),
     });
+    this.chatContextNotePath = this.getActiveMarkdownFilePath();
+    this.candidateNotePath = this.chatContextNotePath;
+    this.plugin.internalToolService.setPreferredNotePath(this.chatContextNotePath);
   }
 
   getViewType(): string {
@@ -158,6 +166,9 @@ export class ChatView extends ItemView {
     this.containerEl.empty();
 
     const root = this.containerEl.createDiv({ cls: "oa-chat-root" });
+    root.addEventListener("pointerdown", () => {
+      void this.maybeAdoptCandidateNoteContext(false);
+    });
 
     const header = root.createDiv({ cls: "oa-chat-header" });
     const titleEl = header.createDiv({ cls: "oa-chat-header-title" });
@@ -204,7 +215,7 @@ export class ChatView extends ItemView {
       app: this.app,
       component: this,
       messagesEl: this.messagesEl,
-      getActiveFilePath: () => this.getActiveFile()?.path ?? "",
+      getActiveFilePath: () => this.chatContextNotePath ?? "",
       onEditMessage: (wrapper, contentEl, message) => {
         if (!this.busy) {
           this.enterEditMode(wrapper, contentEl, message);
@@ -250,7 +261,12 @@ export class ChatView extends ItemView {
       attr: { placeholder: "Ask something...", rows: "3" },
     });
     this.preserveMarkdownContextOnPointerDown(this.inputEl);
-    this.inputEl.addEventListener("input", () => this.handleDraftInputChanged());
+    this.inputEl.addEventListener("focus", () => {
+      void this.maybeAdoptCandidateNoteContext(false);
+    });
+    this.inputEl.addEventListener("input", () => {
+      void this.handleDraftInputChanged();
+    });
     this.inputEl.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
@@ -293,8 +309,24 @@ export class ChatView extends ItemView {
 
     // Listen for active file changes
     this.registerEvent(
-      this.app.workspace.on("active-leaf-change", () => {
+      this.app.workspace.on("active-leaf-change", (workspaceLeaf) => {
+        if (workspaceLeaf === this.leaf) {
+          void this.maybeAdoptCandidateNoteContext(false);
+        }
+        this.captureMarkdownLeafContext(workspaceLeaf);
+        void this.maybeAdoptCandidateNoteContext(false);
         this.plugin.internalToolService.captureMarkdownViewContext();
+        this.renderStatusBar();
+        this.scheduleDraftRAGPreview();
+      })
+    );
+
+    this.registerEvent(
+      this.app.workspace.on("file-open", (file) => {
+        if (file?.extension === "md") {
+          this.candidateNotePath = file.path;
+          void this.maybeAdoptCandidateNoteContext(false);
+        }
         this.renderStatusBar();
         this.scheduleDraftRAGPreview();
       })
@@ -305,7 +337,7 @@ export class ChatView extends ItemView {
         if (!(file instanceof TFile)) {
           return;
         }
-        if (file.path !== this.getActiveFile()?.path) {
+        if (file.path !== this.getChatContextFile()?.path) {
           return;
         }
         this.plugin.internalToolService.captureMarkdownViewContext();
@@ -313,6 +345,16 @@ export class ChatView extends ItemView {
       })
     );
 
+    this.registerEvent(
+      this.app.vault.on("rename", (file, oldPath) => {
+        if (!(file instanceof TFile) || file.extension !== "md") {
+          return;
+        }
+        void this.handleRenamedNote(oldPath, file.path);
+      })
+    );
+
+    this.captureMarkdownLeafContext(this.app.workspace.activeLeaf);
     this.plugin.internalToolService.captureMarkdownViewContext();
     this.renderStatusBar();
     this.restoreLastSession();
@@ -320,8 +362,8 @@ export class ChatView extends ItemView {
   }
 
   async onClose(): Promise<void> {
-    this.saveCurrentSession();
     this.stopGeneration();
+    await this.flushPendingSessionSave();
     this.draftRAGPreviewController.clear();
     this.runMessageCleanups();
     this.containerEl.empty();
@@ -385,8 +427,39 @@ export class ChatView extends ItemView {
     this.refreshModelSelector();
   }
 
+  private getActiveMarkdownFilePath(): string | null {
+    const file = this.app.workspace.getActiveFile();
+    return file?.extension === "md" ? file.path : null;
+  }
+
+  private getChatContextFile(): TFile | null {
+    if (!this.chatContextNotePath) {
+      return null;
+    }
+
+    const abstractFile = this.app.vault.getAbstractFileByPath(this.chatContextNotePath);
+    return abstractFile instanceof TFile ? abstractFile : null;
+  }
+
   private getActiveFile(): TFile | null {
     return this.app.workspace.getActiveFile();
+  }
+
+  private setChatContextNotePath(notePath: string | null): void {
+    this.chatContextNotePath = notePath;
+    this.plugin.internalToolService.setPreferredNotePath(notePath);
+    this.renderStatusBar();
+    this.scheduleDraftRAGPreview();
+  }
+
+  private captureMarkdownLeafContext(workspaceLeaf: WorkspaceLeaf | null): void {
+    const view = workspaceLeaf?.view;
+    if (!(view instanceof MarkdownView) || view.file?.extension !== "md") {
+      return;
+    }
+
+    this.lastMarkdownLeaf = workspaceLeaf;
+    this.candidateNotePath = view.file.path;
   }
 
   private preserveMarkdownContextOnPointerDown(element: HTMLElement): void {
@@ -434,7 +507,7 @@ export class ChatView extends ItemView {
     return {
       context: {
         enabled: this.includeFileContext,
-        fileName: this.getActiveFile()?.name ?? null,
+        fileName: this.getChatContextFile()?.name ?? null,
         selection: selection
           ? {
             preview: this.summarizeSelection(selection.selectedText),
@@ -457,7 +530,10 @@ export class ChatView extends ItemView {
     };
   }
 
-  private handleDraftInputChanged(): void {
+  private async handleDraftInputChanged(): Promise<void> {
+    if (this.inputEl.value.trim().length > 0) {
+      await this.maybeAdoptCandidateNoteContext(true);
+    }
     this.scheduleDraftRAGPreview();
   }
 
@@ -497,61 +573,148 @@ export class ChatView extends ItemView {
     this.transcriptRenderer?.clear();
   }
 
-  private saveCurrentSession(): void {
-    void this.sessionController.save(this.messages, this.currentSessionId).then((id) => {
-      this.currentSessionId = id;
-    });
+  private scheduleSessionSave(): void {
+    if (this.pendingSessionSaveTimer !== null) {
+      globalThis.clearTimeout(this.pendingSessionSaveTimer);
+    }
+
+    this.pendingSessionSaveTimer = globalThis.setTimeout(() => {
+      this.pendingSessionSaveTimer = null;
+      void this.saveCurrentSession();
+    }, 150);
   }
 
-  private loadSession(id: string): void {
-    this.saveCurrentSession();
-    void this.sessionController.load(id).then((session) => {
-      if (!session) {
-        return;
-      }
+  private async flushPendingSessionSave(): Promise<void> {
+    if (this.pendingSessionSaveTimer !== null) {
+      globalThis.clearTimeout(this.pendingSessionSaveTimer);
+      this.pendingSessionSaveTimer = null;
+      await this.saveCurrentSession();
+      return;
+    }
 
-      this.clearMessages();
-      this.inputEl.value = "";
-      this.clearDraftRAGPreview();
-      this.messages = [...session.messages];
+    await this.saveSequence;
+  }
+
+  private async saveCurrentSession(): Promise<void> {
+    const notePath = this.chatContextNotePath;
+    this.saveSequence = this.saveSequence.then(async () => {
+      const id = await this.sessionController.save(this.messages, this.currentSessionId, notePath);
       this.currentSessionId = id;
-
-      for (const msg of this.messages) {
-        this.appendMessage(msg);
-      }
-
       this.refreshSessionSelector();
     });
+
+    await this.saveSequence;
   }
 
-  private startNewChat(): void {
-    if (this.busy) return;
-    this.saveCurrentSession();
+  private async openSessionNote(notePath: string): Promise<void> {
+    const abstractFile = this.app.vault.getAbstractFileByPath(notePath);
+    if (!(abstractFile instanceof TFile)) {
+      new Notice(`The note for this chat no longer exists: ${notePath}`);
+      return;
+    }
 
+    const targetLeaf = this.getPreferredMarkdownLeaf();
+    await targetLeaf.openFile(abstractFile);
+    this.lastMarkdownLeaf = targetLeaf;
+    this.candidateNotePath = notePath;
+  }
+
+  private getPreferredMarkdownLeaf(): WorkspaceLeaf {
+    const activeLeaf = this.app.workspace.activeLeaf;
+    if (activeLeaf?.view instanceof MarkdownView) {
+      return activeLeaf;
+    }
+
+    if (this.lastMarkdownLeaf?.view instanceof MarkdownView) {
+      return this.lastMarkdownLeaf;
+    }
+
+    const existingLeaf = this.app.workspace.getLeavesOfType("markdown")
+      .find((leaf) => leaf !== this.leaf && leaf.view instanceof MarkdownView);
+    if (existingLeaf) {
+      return existingLeaf;
+    }
+
+    return this.app.workspace.getLeaf("tab");
+  }
+
+  private applySessionState(
+    messages: ChatMessage[],
+    sessionId: string | null,
+    notePath: string | null,
+  ): void {
     this.clearMessages();
+    this.messages = [...messages];
+    this.currentSessionId = sessionId;
+    this.setChatContextNotePath(notePath);
     this.inputEl.value = "";
     this.clearDraftRAGPreview();
-    this.currentSessionId = null;
-    void this.sessionController.clearActiveSession();
+
+    for (const msg of this.messages) {
+      this.appendMessage(msg);
+    }
+
     this.refreshSessionSelector();
   }
 
-  private restoreLastSession(): void {
-    const session = this.sessionController.restoreLast();
-    if (session) {
-      this.messages = [...session.messages];
-      this.currentSessionId = session.id;
-      for (const msg of this.messages) {
-        this.appendMessage(msg);
-      }
+  private async loadSession(id: string): Promise<void> {
+    if (this.busy) {
+      return;
     }
+
+    await this.flushPendingSessionSave();
+    const session = await this.sessionController.load(id);
+    if (!session) {
+      return;
+    }
+
+    if (session.notePath && session.notePath !== this.chatContextNotePath) {
+      await this.openSessionNote(session.notePath);
+    }
+
+    this.applySessionState(session.messages, id, session.notePath);
+  }
+
+  private async startNewChat(): Promise<void> {
+    if (this.busy) return;
+    await this.flushPendingSessionSave();
+
+    const notePath = this.candidateNotePath ?? this.chatContextNotePath;
+    this.applySessionState([], null, notePath);
+    await this.sessionController.clearActiveSession();
+  }
+
+  private restoreLastSession(): void {
+    const notePath = this.candidateNotePath ?? this.chatContextNotePath;
+    const session = notePath
+      ? this.sessionController.restoreLastForNote(notePath)
+      : this.sessionController.restoreLast();
+    if (session) {
+      this.applySessionState(session.messages, session.id, session.notePath);
+      return;
+    }
+
+    this.setChatContextNotePath(notePath);
+    this.refreshSessionSelector();
+  }
+
+  private async handleRenamedNote(oldPath: string, newPath: string): Promise<void> {
+    await this.sessionController.remapNotePath(oldPath, newPath);
+
+    if (this.chatContextNotePath === oldPath) {
+      this.setChatContextNotePath(newPath);
+    }
+    if (this.candidateNotePath === oldPath) {
+      this.candidateNotePath = newPath;
+    }
+
     this.refreshSessionSelector();
   }
 
   private refreshSessionSelector(): void {
     this.sessionSelectorEl.empty();
 
-    const chatSessions = this.sessionController.getSessions();
+    const chatSessions = this.sessionController.getSessions(this.chatContextNotePath);
 
     if (chatSessions.length === 0) {
       const opt = this.sessionSelectorEl.createEl("option", {
@@ -564,10 +727,17 @@ export class ChatView extends ItemView {
     }
 
     for (const session of chatSessions) {
+      const belongsToCurrentNote = session.notePath === this.chatContextNotePath;
+      const noteSuffix = session.notePath && !belongsToCurrentNote
+        ? ` [${session.notePath.split("/").pop() ?? session.notePath}]`
+        : "";
       const opt = this.sessionSelectorEl.createEl("option", {
-        text: session.title,
+        text: `${session.title}${noteSuffix}`,
         attr: { value: session.id },
       });
+      opt.style.color = belongsToCurrentNote
+        ? "var(--text-accent)"
+        : "var(--text-muted)";
       if (session.id === this.currentSessionId) {
         opt.selected = true;
       }
@@ -636,6 +806,7 @@ export class ChatView extends ItemView {
           assistantMessage.content += chunk;
           this.renderMessageContent(assistantContentEl, assistantMessage);
           this.messagesEl.scrollTo({ top: this.messagesEl.scrollHeight });
+          this.scheduleSessionSave();
         },
         (call: ToolExecutionEvent) => {
           assistantMessage.toolEvents = [...(assistantMessage.toolEvents ?? []), call];
@@ -644,6 +815,7 @@ export class ChatView extends ItemView {
           }
           this.renderMessageContent(assistantContentEl, assistantMessage);
           this.messagesEl.scrollTo({ top: this.messagesEl.scrollHeight });
+          this.scheduleSessionSave();
           if (call.editProposal) {
             new Notice("AI proposed file changes - click 'Review & Apply Changes' to review");
           }
@@ -660,9 +832,11 @@ export class ChatView extends ItemView {
       }
 
       this.renderMessageContent(assistantContentEl, assistantMessage);
+      this.scheduleSessionSave();
     } finally {
       this.currentAbortController = null;
       this.updateBusyState(false);
+      await this.flushPendingSessionSave();
     }
   }
 
@@ -676,6 +850,7 @@ export class ChatView extends ItemView {
 
     this.messages.push(userMessage);
     this.appendMessage(userMessage);
+    this.scheduleSessionSave();
 
     let requestMessages: ChatMessage[];
     try {
@@ -688,6 +863,7 @@ export class ChatView extends ItemView {
     const assistantMessage: ChatMessage = { role: ChatRole.Assistant, content: "" };
     this.messages.push(assistantMessage);
     const assistantContentEl = this.appendMessage(assistantMessage);
+    this.scheduleSessionSave();
 
     this.updateBusyState(true);
     await this.streamResponse(strategy, requestMessages, assistantMessage, assistantContentEl);
@@ -726,8 +902,41 @@ export class ChatView extends ItemView {
     return buildBibPDFChipState(
       this.bibPDFState,
       this.includeFileContext,
-      this.getActiveFile()?.path ?? null,
+      this.chatContextNotePath,
     );
+  }
+
+  private async maybeAdoptCandidateNoteContext(allowExistingDraft: boolean): Promise<void> {
+    if (this.busy) {
+      return;
+    }
+
+    const candidateNotePath = this.candidateNotePath;
+    if (!candidateNotePath || candidateNotePath === this.chatContextNotePath) {
+      return;
+    }
+
+    if (!allowExistingDraft && this.inputEl.value.trim().length > 0) {
+      return;
+    }
+
+    const existingDraft = this.inputEl.value;
+    await this.flushPendingSessionSave();
+    const session = this.sessionController.restoreLastForNote(candidateNotePath);
+    if (session) {
+      this.applySessionState(session.messages, session.id, session.notePath);
+      if (allowExistingDraft) {
+        this.inputEl.value = existingDraft;
+        this.scheduleDraftRAGPreview();
+      }
+      return;
+    }
+
+    this.applySessionState([], null, candidateNotePath);
+    if (allowExistingDraft) {
+      this.inputEl.value = existingDraft;
+      this.scheduleDraftRAGPreview();
+    }
   }
 
   private async handleSend(): Promise<void> {
@@ -736,6 +945,7 @@ export class ChatView extends ItemView {
     }
 
     this.plugin.internalToolService.captureMarkdownViewContext();
+    await this.maybeAdoptCandidateNoteContext(true);
 
     const text = this.inputEl.value.trim();
     if (!text) {

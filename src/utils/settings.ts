@@ -1,6 +1,16 @@
 import { DEFAULT_SETTINGS, type ObsidianAIChatSettings } from "../types";
 import { normalizeExtensions } from "./vaultEmbeddings";
 
+function normalizeChatSessions(
+  loaded: Partial<ObsidianAIChatSettings> | null | undefined,
+): ObsidianAIChatSettings["chatSessions"] {
+  return (loaded?.chatSessions ?? DEFAULT_SETTINGS.chatSessions).map((session) => ({
+    ...session,
+    notePath: session.notePath ?? null,
+    lastInteractedAt: session.lastInteractedAt ?? session.createdAt,
+  }));
+}
+
 function normalizeLegacyMistralModel(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   if (!trimmed) {
@@ -50,7 +60,7 @@ export function resolveSettings(
         loaded?.vaultRAG?.includeExtensions ?? DEFAULT_SETTINGS.vaultRAG.includeExtensions,
       ),
     },
-    chatSessions: loaded?.chatSessions ?? DEFAULT_SETTINGS.chatSessions,
+    chatSessions: normalizeChatSessions(loaded),
     activeSessionId: loaded?.activeSessionId ?? DEFAULT_SETTINGS.activeSessionId,
     favoriteModels: loaded?.favoriteModels ?? DEFAULT_SETTINGS.favoriteModels,
   };

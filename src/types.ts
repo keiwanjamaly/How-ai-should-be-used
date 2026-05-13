@@ -56,6 +56,8 @@ export interface ChatSession {
   title: string;
   messages: ChatMessage[];
   createdAt: number;
+  notePath: string | null;
+  lastInteractedAt: number;
 }
 
 export interface ObsidianAIChatSettings {

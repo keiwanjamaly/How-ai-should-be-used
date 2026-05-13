@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ObsidianAIChatSettings } from "../types.ts";
 import { resolveSettings } from "../utils/settings.ts";
 
 describe("settings resolution", () => {
@@ -23,5 +24,29 @@ describe("settings resolution", () => {
     expect(settings.pdf.mistralModel).toBe("custom-mistral-model");
     expect(settings.pdf.mistralApiKey).toBe("key");
     expect(settings.pdf.bibAttachmentRoot).toBe("/tmp/pdfs");
+  });
+
+  it("migrates legacy chat sessions to note-aware shape", () => {
+    const settings = resolveSettings({
+      chatSessions: [
+        {
+          id: "session-1",
+          title: "Legacy",
+          messages: [],
+          createdAt: 100,
+        },
+      ],
+    } as unknown as Partial<ObsidianAIChatSettings>);
+
+    expect(settings.chatSessions).toEqual([
+      {
+        id: "session-1",
+        title: "Legacy",
+        messages: [],
+        createdAt: 100,
+        notePath: null,
+        lastInteractedAt: 100,
+      },
+    ]);
   });
 });

@@ -18,6 +18,7 @@ import {
 
 export class InternalToolService {
   private lastMarkdownView: MarkdownView | null = null;
+  private preferredNotePath: string | null = null;
   private lastSelectionContext: {
     filePath: string;
     selectedText: string;
@@ -28,6 +29,11 @@ export class InternalToolService {
   } | null = null;
 
   constructor(private readonly app: App) {}
+
+  setPreferredNotePath(path: string | null): void {
+    this.preferredNotePath = path;
+    this.syncSelectionHighlight();
+  }
 
   getAvailableTools(): ToolDefinition[] {
     return [
@@ -220,7 +226,14 @@ export class InternalToolService {
   }
 
   private syncSelectionHighlight(): void {
-    if (!this.lastSelectionContext || this.lastSelectionContext.startOffset >= this.lastSelectionContext.endOffset) {
+    if (
+      !this.lastSelectionContext
+      || this.lastSelectionContext.startOffset >= this.lastSelectionContext.endOffset
+      || (
+        this.preferredNotePath !== null
+        && this.lastSelectionContext.filePath !== this.preferredNotePath
+      )
+    ) {
       clearCachedSelectionHighlight();
       return;
     }
@@ -334,16 +347,36 @@ export class InternalToolService {
 
   private getTrackedMarkdownView(): MarkdownView | null {
     const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-    if (activeView?.file?.extension === "md") {
+    if (
+      activeView?.file?.extension === "md"
+      && (
+        this.preferredNotePath === null
+        || activeView.file.path === this.preferredNotePath
+      )
+    ) {
       this.lastMarkdownView = activeView;
       return activeView;
     }
 
-    if (this.lastMarkdownView?.file?.extension === "md") {
+    if (
+      this.lastMarkdownView?.file?.extension === "md"
+      && (
+        this.preferredNotePath === null
+        || this.lastMarkdownView.file.path === this.preferredNotePath
+      )
+    ) {
       return this.lastMarkdownView;
     }
 
-    const markdownLeaf = this.app.workspace.getLeavesOfType("markdown")[0];
+    const markdownLeaf = this.app.workspace.getLeavesOfType("markdown").find((leaf) => {
+      const leafView = leaf.view;
+      return leafView instanceof MarkdownView
+        && leafView.file?.extension === "md"
+        && (
+          this.preferredNotePath === null
+          || leafView.file.path === this.preferredNotePath
+        );
+    });
     const leafView = markdownLeaf?.view;
     if (leafView instanceof MarkdownView && leafView.file?.extension === "md") {
       this.lastMarkdownView = leafView;
@@ -376,6 +409,14 @@ export class InternalToolService {
   }
 
   private getActiveMarkdownFile(): TFile {
+    if (this.preferredNotePath) {
+      const abstractFile = this.app.vault.getAbstractFileByPath(this.preferredNotePath);
+      if (abstractFile instanceof TFile) {
+        return abstractFile;
+      }
+      throw new Error("The attached chat note could not be found.");
+    }
+
     const file = this.app.workspace.getActiveFile();
     if (!file) {
       throw new Error("No active note is open.");
